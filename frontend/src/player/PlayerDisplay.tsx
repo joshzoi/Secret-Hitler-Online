@@ -1,4 +1,4 @@
-import React, { ReactElement, useRef, useState } from "react";
+import React, { ReactElement, useContext, useRef, useState } from "react";
 import Player from "./Player";
 import {
   PLAYER_IDENTITY,
@@ -18,6 +18,7 @@ import {
 import "./PlayerDisplay.css";
 import { GameState, Role } from "../types";
 import { doesHitlerKnowFascists, isVictoryState } from "../utils";
+import { RoleVisibilityContext } from "../util/RoleVisibilityContext";
 
 // <editor-fold desc="Player Filters">
 
@@ -122,6 +123,13 @@ const defaultProps: Partial<PlayerDisplayProps> = {
 };
 
 /**
+ * Whether a player's role should be shown, concealed behind a placeholder that
+ * can be held down to peek, or omitted entirely because this client was never
+ * told it.
+ */
+type RoleVisibility = "show" | "hidden" | "none";
+
+/**
  * Displays a row of player icons and handles displaying busy status, votes, and roles where applicable.
  */
 export default function PlayerDisplay(
@@ -131,6 +139,8 @@ export default function PlayerDisplay(
     ...defaultProps,
     ...inputProps,
   } as Required<PlayerDisplayProps>;
+
+  const { masked: rolesMasked } = useContext(RoleVisibilityContext);
 
   const [isPlayingVoteAnimation, setIsPlayingVoteAnimation] = useState(false);
   // An array object that maps from each player's position in the order to
@@ -203,28 +213,40 @@ export default function PlayerDisplay(
    * @param playerName Name of player to view role for
    * @returns true if the role should be shown; false otherwise.
    */
-  const shouldShowRole = (
+  const roleVisibility = (
     gameState: GameState,
     playerName: string
-  ): boolean => {
+  ): RoleVisibility => {
     const myRole = gameState.players[props.user].id;
     const otherRole = gameState.players[playerName].id;
 
     if (otherRole === undefined) {
-      return false;
+      return "none";
     }
     if (isVictoryState(gameState.state)) {
-      return true;
+      // The end of the game reveals everyone, regardless of the Hide Role
+      // setting -- that is the whole point of the victory screen.
+      return "show";
     }
+
+    let wouldShow;
     if (
       myRole === Role.FASCIST ||
       (myRole === Role.HITLER && doesHitlerKnowFascists(gameState))
     ) {
       // Hide liberal roles, because they can be redundant otherwise.
-      return otherRole !== Role.LIBERAL;
+      wouldShow = otherRole !== Role.LIBERAL;
     } else {
-      return otherRole !== undefined;
+      wouldShow = true;
     }
+
+    if (!wouldShow) {
+      return "none";
+    }
+    // Only conceal roles this player would otherwise have been shown. Masking
+    // earlier would put a placeholder on roles they should not know exist,
+    // which itself leaks that there is something to see.
+    return rolesMasked ? "hidden" : "show";
   };
 
   /**
@@ -280,6 +302,8 @@ export default function PlayerDisplay(
           label = <p id="player-display-label">{roleText}</p>;
         }
 
+        const visibility = roleVisibility(props.gameState, playerName);
+
         const isSelected = props.selection === playerName;
         const onClick = () => {
           onPlayerSelected(playerName);
@@ -298,7 +322,8 @@ export default function PlayerDisplay(
                 props.showBusy
               } // Do not show while voting.
               role={playerData[PLAYER_IDENTITY]}
-              showRole={shouldShowRole(props.gameState, playerName)}
+              showRole={visibility === "show"}
+              roleHidden={visibility === "hidden"}
               highlight={playerName === props.user}
               disabled={disabled}
               disabledText={disabledText}

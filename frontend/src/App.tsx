@@ -84,6 +84,7 @@ import { defaultPortrait } from "./assets";
 import Player from "./player/Player";
 import LoginPageContent from "./LoginPageContent";
 import Cookies from "js-cookie";
+import { RoleVisibilityContext } from "./util/RoleVisibilityContext";
 import {
   GameState,
   LobbyState,
@@ -123,6 +124,7 @@ const DEFAULT_GAME_STATE: GameState = {
 
 const COOKIE_NAME = "name";
 const COOKIE_LOBBY = "lobby";
+const COOKIE_HIDE_ROLE = "hide-role";
 
 if (DEBUG) {
   console.warn("Running in debug mode.");
@@ -162,6 +164,11 @@ type AppState = {
   eventBarMessage: string;
   statusBarText: string;
   allAnimationsFinished: boolean;
+  /* Whether the player has chosen to conceal role information on this device,
+     so a neighbour glancing at their screen cannot see their team. Persisted. */
+  hideRole: boolean;
+  /* True while a concealed role badge is held down to peek at it. Transient. */
+  peekingRole: boolean;
 };
 
 const defaultAppState: AppState = {
@@ -191,6 +198,8 @@ const defaultAppState: AppState = {
   eventBarMessage: "",
   statusBarText: "---",
   allAnimationsFinished: true,
+  hideRole: false,
+  peekingRole: false,
 };
 
 class App extends Component<{}, AppState> {
@@ -216,6 +225,7 @@ class App extends Component<{}, AppState> {
       joinName: name || "",
       joinLobby: lobby || "",
       createLobbyName: name || "",
+      hideRole: Cookies.get(COOKIE_HIDE_ROLE) === "true",
     };
 
     // The website uses Google Analytics!
@@ -239,6 +249,8 @@ class App extends Component<{}, AppState> {
     this.showChangeIconAlert = this.showChangeIconAlert.bind(this);
     this.updateChangeIconAlert = this.updateChangeIconAlert.bind(this);
     this.onClickChangeIcon = this.onClickChangeIcon.bind(this);
+    this.onClickToggleHideRole = this.onClickToggleHideRole.bind(this);
+    this.setPeekingRole = this.setPeekingRole.bind(this);
 
     // Ping the server to wake it up if it's not currently being used
     // This reduces the delay users experience when starting lobbies
@@ -763,6 +775,24 @@ class App extends Component<{}, AppState> {
 
   onClickChangeIcon() {
     this.showChangeIconAlert();
+  }
+
+  /**
+   * Toggles whether role information is concealed on this device, and persists
+   * the choice so it survives a refresh and carries into the next game.
+   */
+  onClickToggleHideRole() {
+    const hideRole = !this.state.hideRole;
+    this.setState({ hideRole, peekingRole: false });
+    Cookies.set(COOKIE_HIDE_ROLE, String(hideRole), { expires: 7 });
+  }
+
+  /**
+   * Called while a concealed role badge is held down, to reveal it for as long
+   * as the press lasts.
+   */
+  setPeekingRole(peekingRole: boolean) {
+    this.setState({ peekingRole });
   }
 
   updateChangeIconAlert() {
@@ -1673,6 +1703,20 @@ class App extends Component<{}, AppState> {
         />
 
         <div style={{ backgroundColor: "var(--backgroundDark)" }}>
+          <div id={"hide-role-container"}>
+            <p id={"hide-role-text"}>
+              {this.state.hideRole
+                ? "Roles hidden. Hold a ? to peek."
+                : "Playing in the same room?"}
+            </p>
+            <button
+              id={"hide-role-button"}
+              className={this.state.hideRole ? "alt" : ""}
+              onClick={this.onClickToggleHideRole}
+            >
+              {this.state.hideRole ? "SHOW ROLE" : "HIDE ROLE"}
+            </button>
+          </div>
           <PlayerDisplay
             gameState={this.state.gameState}
             user={this.state.name}
@@ -1778,10 +1822,15 @@ class App extends Component<{}, AppState> {
         page_render = this.renderLoginPage();
     }
     return (
-      <>
+      <RoleVisibilityContext.Provider
+        value={{
+          masked: this.state.hideRole && !this.state.peekingRole,
+          setPeeking: this.setPeekingRole,
+        }}
+      >
         <HelmetMetaData />
         {page_render}
-      </>
+      </RoleVisibilityContext.Provider>
     );
   }
 }

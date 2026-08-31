@@ -227,3 +227,50 @@ textarea {
 #victory-header {
     width: 100%;
 }
+
+/* Hide Role toggle. Sits in the dark band above the player tiles it controls,
+   laid out like the lobby's "Players (n/10) [CHANGE ICON]" row. */
+#hide-role-container {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto;
+    width: 90vw;
+    max-width: 655px;
+}
+
+#hide-role-text {
+    text-align: left;
+    align-self: center;
+    font-size: calc(6px + 1vmin);
+    color: var(--textColorOnDark);
+}
+
+#hide-role-button {
+    margin-left: auto;
+    /* Smaller than an in-game action button: this is a setting, not a move. */
+    font-size: calc(4px + 2vmin);
+    padding: 6px 16px;
+    margin-top: 8px;
+    margin-bottom: 8px;
+}
+
+/* The "on" state, using the app's secondary button colours. */
+#hide-role-button.alt {
+    background: var(--buttonAltFill);
+    box-shadow: 0 5px 0 var(--buttonAltShadowFill);
+}
+
+#hide-role-button.alt:hover,
+#hide-role-button.alt:focus,
+#hide-role-button.alt:focus-visible {
+    background: var(--buttonAltHoverFill);
+}
+
+#hide-role-button.alt:not(:disabled):active {
+    top: 5px;
+    background: var(--buttonAltFill);
+    box-shadow: 0 0 0 var(--buttonAltShadowFill);
+}

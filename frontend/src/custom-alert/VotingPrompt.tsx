@@ -13,6 +13,10 @@ import YesVote from "../assets/vote-yes.png";
 import NoVote from "../assets/vote-no.png";
 import Player from "../player/Player";
 import { GameState, Role, SendWSCommand, WSCommandType } from "../types";
+import {
+  RoleVisibility,
+  RoleVisibilityContext,
+} from "../util/RoleVisibilityContext";
 
 type VotingPromptProps = {
   gameState: GameState;
@@ -26,6 +30,8 @@ type VotingPromptState = {
 };
 
 class VotingPrompt extends Component<VotingPromptProps, VotingPromptState> {
+  static contextType = RoleVisibilityContext;
+
   timeoutID: NodeJS.Timeout | undefined;
 
   constructor(props: VotingPromptProps) {
@@ -91,7 +97,10 @@ class VotingPrompt extends Component<VotingPromptProps, VotingPromptState> {
 
   render() {
     let chancellorName = this.props.gameState[PARAM_CHANCELLOR];
-    let shouldShowChancellorRole = this.shouldChancellorRoleBeShown();
+    let wouldShowChancellorRole = this.shouldChancellorRoleBeShown();
+    let { masked } = this.context as RoleVisibility;
+    let roleHidden = wouldShowChancellorRole && masked;
+    let shouldShowChancellorRole = wouldShowChancellorRole && !roleHidden;
     let chancellorRole =
       this.props.gameState[PARAM_PLAYERS][chancellorName][PLAYER_IDENTITY];
     let presidentName = this.props.gameState[PARAM_PRESIDENT];
@@ -105,6 +114,7 @@ class VotingPrompt extends Component<VotingPromptProps, VotingPromptState> {
                 id={"voting-player"}
                 name={chancellorName}
                 showRole={shouldShowChancellorRole}
+                roleHidden={roleHidden}
                 role={chancellorRole}
                 style={{ marginRight: "10px" }}
                 icon={this.props.gameState.icon[chancellorName]}
