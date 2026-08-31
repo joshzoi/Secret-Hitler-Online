@@ -83,6 +83,10 @@ export const PACKET_GAME_STATE = "game";
 export const PACKET_LOBBY = "lobby";
 export const PACKET_OK = "ok";
 export const PACKET_PONG = "pong";
+/* A refusal the player can act on -- shown to them rather than closing the
+   connection, which is reserved for protocol violations. */
+export const PACKET_ERROR = "error";
+export const PARAM_MESSAGE = "message";
 
 // Commands
 //<editor-fold desc="Commands">

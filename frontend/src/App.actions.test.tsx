@@ -2,10 +2,15 @@ import React from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import App from "./App";
 import {
+  PACKET_ERROR,
   PACKET_GAME_STATE,
+  PACKET_LOBBY,
   PACKET_OK,
+  PARAM_ICON,
+  PARAM_MESSAGE,
   PARAM_PACKET_TYPE,
   PARAM_REQUEST_ID,
+  PARAM_USERNAMES,
 } from "./constants";
 import {
   GameState,
@@ -246,4 +251,54 @@ test("a player with nothing to do is not prompted", async () => {
   );
   runAnimations();
   expect(screen.queryByText(/Nominate a player/)).not.toBeInTheDocument();
+});
+
+/**
+ * Delivers a lobby packet listing the given players, with ME first so that this
+ * client is the host and sees the start button at all.
+ */
+function deliverLobby(ws: FakeWebSocket, players: string[]) {
+  const icon: Record<string, string> = {};
+  // Anything but the default, so the icon picker does not open over the lobby.
+  players.forEach((player, i) => (icon[player] = "p" + (i + 1)));
+  ws.deliver({
+    [PARAM_PACKET_TYPE]: PACKET_LOBBY,
+    [PARAM_USERNAMES]: players,
+    [PARAM_ICON]: icon,
+  });
+}
+
+function startGameButton() {
+  return screen.getByRole("button", { name: "START GAME" });
+}
+
+test("the game cannot be started with fewer than five players", async () => {
+  const ws = await joinLobby();
+  deliverLobby(ws, [ME, "Bob", "Carol", "Dave"]);
+
+  expect(startGameButton()).toBeDisabled();
+  expect(screen.getByText(/Need at least 5 players/)).toBeInTheDocument();
+});
+
+test("the game can be started once five players are present", async () => {
+  const ws = await joinLobby();
+  deliverLobby(ws, PLAYERS);
+
+  expect(startGameButton()).toBeEnabled();
+  expect(screen.queryByText(/Need at least 5 players/)).toBeNull();
+});
+
+test("a refusal from the server is shown without dropping the connection", async () => {
+  const ws = await joinLobby();
+  deliverLobby(ws, PLAYERS);
+
+  ws.deliver({
+    [PARAM_PACKET_TYPE]: PACKET_ERROR,
+    [PARAM_MESSAGE]: "At least 5 players are needed to start a game (4 connected).",
+  });
+
+  expect(
+    screen.getByText(/At least 5 players are needed to start a game/)
+  ).toBeInTheDocument();
+  expect(ws.readyState).toBe(FakeWebSocket.OPEN);
 });

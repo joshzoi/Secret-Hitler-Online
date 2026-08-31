@@ -64,6 +64,10 @@ import {
   SERVER_PING,
   PARAM_ICON,
   PARAM_INVESTIGATION,
+  PACKET_ERROR,
+  PARAM_MESSAGE,
+  MIN_PLAYERS,
+  MAX_PLAYERS,
 } from "./constants";
 
 import PlayerDisplay, {
@@ -903,6 +907,11 @@ class App extends Component<{}, AppState> {
           false
         );
         break;
+      case PACKET_ERROR:
+        // The server refused something we asked for and stayed connected. Say why.
+        this.showSnackBar(message[PARAM_MESSAGE]);
+        break;
+
       case PACKET_PONG:
       default:
       // No action
@@ -1294,6 +1303,8 @@ class App extends Component<{}, AppState> {
 
   /**
    * Determines whether the 'Start Game' button in the lobby should be enabled.
+   * There are no bots to pad a short lobby out, so the game needs enough real
+   * players before it can begin.
    */
   shouldStartGameBeEnabled() {
     // Verify that all players have icons
@@ -1302,7 +1313,7 @@ class App extends Component<{}, AppState> {
         return false;
       }
     }
-    return true;
+    return this.state.usernames.length >= MIN_PLAYERS;
   }
 
   /**
@@ -1406,7 +1417,7 @@ class App extends Component<{}, AppState> {
             <div id={"lobby-player-area-container"}>
               <div id={"lobby-player-text-choose-container"}>
                 <p id={"lobby-player-count-text"}>
-                  Players ({this.state.usernames.length}/10)
+                  Players ({this.state.usernames.length}/{MAX_PLAYERS})
                 </p>
                 <button
                   id={"lobby-change-icon-button"}
@@ -1421,6 +1432,11 @@ class App extends Component<{}, AppState> {
             <div id={"lobby-button-container"}>
               {!isHost && (
                 <p id={"lobby-vip-text"}>Only the host can start the game.</p>
+              )}
+              {isHost && this.state.usernames.length < MIN_PLAYERS && (
+                <p id={"lobby-vip-text"}>
+                  Need at least {MIN_PLAYERS} players to start.
+                </p>
               )}
               <button
                 onClick={this.onClickStartGame}
@@ -1958,8 +1974,6 @@ class App extends Component<{}, AppState> {
               (fascistVictoryElection || fascistVictoryPolicy));
 
           // Register player victory/loss with analytics.
-          // TODO: Only register if player is host, or if player is the only
-          // non-bot player in the game.
           if (playerWon) {
             ReactGA.event({
               category: "Victory",

@@ -56,6 +56,10 @@ public class SecretHitlerServer {
     public static final String PACKET_LOBBY = "lobby";
     public static final String PACKET_OK = "ok"; // general response packet sent after any successful command.
     public static final String PACKET_PONG = "pong"; // response to pings.
+    // A refusal the player can act on, shown to them rather than closing the
+    // connection. Closing is for protocol violations; this is for "not yet".
+    public static final String PACKET_ERROR = "error";
+    public static final String PARAM_MESSAGE = "message";
 
     public static final String PARAM_INVESTIGATION = "investigation";
     public static final String FASCIST = "FASCIST";
@@ -785,6 +789,14 @@ public class SecretHitlerServer {
                     ctx.send(msg.toString());
                 }
 
+            } catch (Lobby.StartRefusedException e) {
+                // The player asked for something reasonable that is not possible
+                // right now. Tell them why and leave them connected.
+                logger.debug(logMessage + " REFUSED (" + e.getMessage() + ")");
+                JSONObject msg = new JSONObject();
+                msg.put(PARAM_PACKET_TYPE, PACKET_ERROR);
+                msg.put(PARAM_MESSAGE, e.getMessage());
+                ctx.send(msg.toString());
             } catch (NullPointerException e) {
                 // Show error messages by default, since they indicate API access
                 // issues.

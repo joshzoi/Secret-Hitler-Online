@@ -17,6 +17,28 @@ behind your own reverse proxy — see [SELF_HOSTING.md](SELF_HOSTING.md).
 
 Your setup will vary depending on if you're only making changes to the frontend, or if you're making changes to the frontend and the backend at once.
 
+## Playing a test game
+
+A game needs five players and the server has no bots, so trying a real game by
+hand would mean five browser sessions. `fill-lobby` opens the rest of them: each
+placeholder joins over a websocket like any other client and plays the first
+legal move it is offered. It does not try to play well -- it is there so the game
+keeps moving.
+
+Create a lobby in the browser, then, in a second terminal:
+
+```bash
+cd frontend
+npm run fillLobby -- ABCD        # four placeholders join lobby ABCD
+npm run fillLobby -- ABCD 2      # or just two
+```
+
+Press START GAME in the browser once they appear. Ctrl-C makes them leave the
+lobby, freeing their seats immediately.
+
+It talks to `ws://127.0.0.1:4040` by default; pass `--server ws://host:port` for
+anything else.
+
 ## Frontend Only
 
 Follow these instructions if you are only making changes to the frontend. These instructions will allow you to connect to the development server rather than needing to run the instance locally.
