@@ -32,10 +32,42 @@ export const CHECK_LOGIN = "/check-login";
 export const NEW_LOBBY = "/new-lobby";
 export const WEBSOCKET = "/game";
 export const SERVER_PING = "/ping";
-export const MAX_FAILED_CONNECTIONS = 5;
 export const LOBBY_CODE_LENGTH = 4;
 export const SERVER_TIMEOUT = 4000;
-export const PING_INTERVAL = 50000;
+
+//////// Reconnection
+
+/* How often the client pings the server. Doubles as a liveness check and as the
+   traffic that keeps the lobby from being reaped as inactive. */
+export const PING_INTERVAL = 25000;
+/* How long to wait for any reply before deciding the connection is dead. Only
+   enforced while the page is visible: a hidden tab has its timers throttled, so a
+   late reply there says nothing about the connection. */
+export const PONG_TIMEOUT = 15000;
+/* Coming back to a tab fires visibilitychange, focus and sometimes pageshow in
+   quick succession. Only the first of them needs to check the connection. */
+export const VERIFY_DEBOUNCE = 1000;
+/* Backoff between reconnection attempts. The first retry is immediate, since the
+   common case is a connection the server closed and will happily accept again. */
+export const RECONNECT_BASE_DELAY = 500;
+export const RECONNECT_MAX_DELAY = 5000;
+/* How long to keep retrying before giving up and returning the player to the
+   login page. Only counted while the page is visible, so a tab left in the
+   background is still trying when the player comes back to it. */
+export const RECONNECT_GIVE_UP_AFTER = 90000;
+
+/* Websocket close reasons sent by the server, read from the text before the colon
+   in the close reason. These mean reconnecting cannot succeed, so the player is
+   told what happened instead of being left watching a spinner. */
+export const CLOSE_LOBBY_NOT_FOUND = "lobby-not-found";
+export const CLOSE_NAME_TAKEN = "name-taken";
+export const CLOSE_LOBBY_FULL = "lobby-full";
+export const CLOSE_GAME_IN_PROGRESS = "game-in-progress";
+export const CLOSE_LOBBY_TIMED_OUT = "lobby-timed-out";
+export const CLOSE_BAD_REQUEST = "bad-request";
+/* This connection was superseded by a newer one from the same browser. Retrying
+   would just have the two connections take turns evicting each other. */
+export const CLOSE_REPLACED = "replaced";
 
 //////// Game Constants
 export const MIN_PLAYERS = 5;
@@ -58,6 +90,7 @@ export const PARAM_COMMAND = "command";
 export const PARAM_NAME = "name";
 export const PARAM_LOBBY = "lobby";
 export const PARAM_ICON = "icon"; // id of the selected portrait.
+export const PARAM_CLIENT_ID = "client-id"; // identifies this browser to the server.
 export const PARAM_VOTE = "vote";
 export const PARAM_VETO = "veto"; // the veto decision (yes/no)
 export const PARAM_CHOICE = "choice"; // the index of the chosen policy.
@@ -77,6 +110,7 @@ export const COMMAND_REGISTER_SPECIAL_ELECTION = "register-special-election";
 export const COMMAND_GET_INVESTIGATION = "get-investigation";
 export const COMMAND_REGISTER_PEEK = "register-peek";
 export const COMMAND_END_TERM = "end-term";
+export const COMMAND_LEAVE_LOBBY = "leave-lobby";
 
 //</editor-fold>
 

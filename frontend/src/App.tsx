@@ -11,7 +11,6 @@ import EventBar from "./event-bar/EventBar";
 // TODO: replace constants with enums from types
 import {
   PAGE,
-  MAX_FAILED_CONNECTIONS,
   SERVER_ADDRESS_HTTP,
   NEW_LOBBY,
   CHECK_LOGIN,
@@ -47,6 +46,19 @@ import {
   DEBUG,
   PACKET_PONG,
   PING_INTERVAL,
+  PONG_TIMEOUT,
+  VERIFY_DEBOUNCE,
+  RECONNECT_BASE_DELAY,
+  RECONNECT_MAX_DELAY,
+  RECONNECT_GIVE_UP_AFTER,
+  CLOSE_LOBBY_NOT_FOUND,
+  CLOSE_NAME_TAKEN,
+  CLOSE_LOBBY_FULL,
+  CLOSE_GAME_IN_PROGRESS,
+  CLOSE_LOBBY_TIMED_OUT,
+  CLOSE_BAD_REQUEST,
+  CLOSE_REPLACED,
+  PARAM_CLIENT_ID,
   SERVER_PING,
   PARAM_ICON,
   PARAM_INVESTIGATION,
@@ -85,6 +97,7 @@ import Player from "./player/Player";
 import LoginPageContent from "./LoginPageContent";
 import Cookies from "js-cookie";
 import { RoleVisibilityContext } from "./util/RoleVisibilityContext";
+import { getClientId } from "./util/clientId";
 import {
   GameState,
   LobbyState,
@@ -125,6 +138,32 @@ const DEFAULT_GAME_STATE: GameState = {
 const COOKIE_NAME = "name";
 const COOKIE_LOBBY = "lobby";
 const COOKIE_HIDE_ROLE = "hide-role";
+
+/* Close reasons that reconnecting cannot get past. Anything else - a dropped
+   network, a server restart, a browser suspending the page - is worth retrying. */
+const TERMINAL_CLOSE_REASONS: { [reason: string]: string } = {
+  [CLOSE_LOBBY_NOT_FOUND]: "The lobby no longer exists.",
+  [CLOSE_NAME_TAKEN]: "Someone else is using that name in the lobby.",
+  [CLOSE_LOBBY_FULL]: "The lobby is currently full.",
+  [CLOSE_GAME_IN_PROGRESS]: "The lobby is currently in a game.",
+  [CLOSE_LOBBY_TIMED_OUT]: "The lobby timed out.",
+  [CLOSE_BAD_REQUEST]: "There was an error connecting to the server.",
+  [CLOSE_REPLACED]: "This lobby was opened in another window.",
+};
+
+/**
+ * Pulls the machine-readable part out of a websocket close reason, which the
+ * server sends as "<reason>: <explanation>".
+ * @param reason the raw close reason, which is empty when the connection dropped
+ *               rather than being closed by the server.
+ */
+function parseCloseReason(reason: string | undefined): string {
+  if (!reason) {
+    return "";
+  }
+  const separator = reason.indexOf(":");
+  return separator === -1 ? reason : reason.substring(0, separator);
+}
 
 if (DEBUG) {
   console.warn("Running in debug mode.");
@@ -169,6 +208,9 @@ type AppState = {
   hideRole: boolean;
   /* True while a concealed role badge is held down to peek at it. Transient. */
   peekingRole: boolean;
+  /* True while the connection to the server is down and being retried, so the
+     player can see that the game is stalled rather than that nobody is moving. */
+  connectionLost: boolean;
 };
 
 const defaultAppState: AppState = {
@@ -200,12 +242,29 @@ const defaultAppState: AppState = {
   allAnimationsFinished: true,
   hideRole: false,
   peekingRole: false,
+  connectionLost: false,
 };
 
 class App extends Component<{}, AppState> {
   websocket?: WebSocket = undefined;
-  failedConnections: number = 0;
+  /* The credentials the current connection was opened with. Kept outside of
+     component state so a reconnect never races a pending setState. */
+  connectionName: string = "";
+  connectionLobby: string = "";
+  reconnectAttempts: number = 0;
+  /* Whether the server has accepted the current connection. The websocket "open"
+     event fires as soon as the handshake completes, which is before the server
+     has decided whether to let this player in, so it is not on its own a sign
+     that anything worked. */
+  connectionConfirmed: boolean = false;
+  reconnectTimer?: NodeJS.Timeout = undefined;
+  /* When the connection first went down, used to decide when to stop retrying. */
+  firstFailureTime: number = 0;
+  /* Coming back to a tab fires several events at once (visibilitychange, focus,
+     sometimes pageshow); this keeps that from becoming several round trips. */
+  lastVerifyTime: number = 0;
   pingInterval?: NodeJS.Timeout = undefined;
+  pongTimer?: NodeJS.Timeout = undefined;
   reconnectOnConnectionClosed: boolean = true;
   snackbarMessages: number = 0;
   animationQueue: (() => void)[] = [];
@@ -235,6 +294,8 @@ class App extends Component<{}, AppState> {
     // These are necessary for handling class fields safely (ex: websocket)
     this.onWebSocketClose = this.onWebSocketClose.bind(this);
     this.tryOpenWebSocket = this.tryOpenWebSocket.bind(this);
+    this.verifyConnection = this.verifyConnection.bind(this);
+    this.onVisibilityChange = this.onVisibilityChange.bind(this);
     this.onClickLeaveLobby = this.onClickLeaveLobby.bind(this);
     this.onClickCopy = this.onClickCopy.bind(this);
     this.onClickStartGame = this.onClickStartGame.bind(this);
@@ -283,9 +344,13 @@ class App extends Component<{}, AppState> {
       SERVER_ADDRESS_HTTP +
         CHECK_LOGIN +
         "?name=" +
-        encodeURI(name) +
+        encodeURIComponent(name) +
         "&lobby=" +
-        encodeURI(lobby)
+        encodeURIComponent(lobby) +
+        "&" +
+        PARAM_CLIENT_ID +
+        "=" +
+        encodeURIComponent(getClientId())
     );
   }
 
@@ -293,15 +358,21 @@ class App extends Component<{}, AppState> {
    * Attempts to open a WebSocket with the server.
    * @param name the name of the user to connect with.
    * @param lobby the lobby to connect with.
-   * @effects If a connection was successfully established, sets the state with the {@code name}, {@code lobby},
-   *          and {@code ws} parameters. The WebSocket has a message callback to this.onWebSocketMessage().
-   * @return {boolean} true if the connection was opened successfully. Otherwise, returns false.
+   * @effects Opens a connection and records {@code name} and {@code lobby} as the
+   *          credentials to reconnect with. The page is not moved on until the
+   *          server actually accepts the connection, so a refused login leaves the
+   *          player on the login page rather than flashing them into the lobby.
+   * @return {boolean} true if the connection could be started. Otherwise, false.
    */
   tryOpenWebSocket(name: string, lobby: string) {
-    if (DEBUG) {
-      console.log("Opening connection with lobby: " + lobby);
-      console.log("Failed connections: " + this.failedConnections);
-    }
+    this.connectionName = name;
+    this.connectionLobby = lobby;
+    // Opening a connection at all means the player wants to be in this lobby, so
+    // a later drop should be reconnected rather than treated as them leaving.
+    this.reconnectOnConnectionClosed = true;
+    this.clearReconnectTimer();
+    this.closeCurrentWebSocket();
+
     let url =
       WEBSOCKET_HEADER +
       SERVER_ADDRESS +
@@ -309,126 +380,419 @@ class App extends Component<{}, AppState> {
       "?name=" +
       encodeURIComponent(name) +
       "&lobby=" +
-      encodeURIComponent(lobby);
+      encodeURIComponent(lobby) +
+      "&" +
+      PARAM_CLIENT_ID +
+      "=" +
+      encodeURIComponent(getClientId());
     if (DEBUG) {
-      console.trace("TryOpenWebsocket URL: " + url);
+      console.log("Opening connection to lobby " + lobby + " at " + url);
     }
 
-    // Close existing websocket
-    if (this.websocket) {
-      // Clear onClose event to prevent reconnection
-      this.websocket.onclose = () => {};
-      this.websocket.close();
-      this.websocket = undefined;
+    let ws: WebSocket;
+    try {
+      ws = new WebSocket(url);
+    } catch (e) {
+      console.error("Could not open a websocket.", e);
+      this.scheduleReconnect();
+      return false;
     }
 
-    let ws = new WebSocket(url);
-    if (ws.OPEN) {
-      console.log("Websocket opened successfully to " + url);
-      this.websocket = ws;
-      this.reconnectOnConnectionClosed = true;
-      // Only move the player to the lobby page if they were logging in.
-      // This is to prevent the bug where players flash in/out of the lobby page
-      // at random points in the game.
-      if (this.state.page === PAGE.LOGIN) {
-        this.setState({ page: PAGE.LOBBY });
+    this.websocket = ws;
+    this.connectionConfirmed = false;
+    this.setState({ name: name, lobby: lobby });
+
+    // Every handler checks that this is still the current socket. A socket that
+    // has been replaced can still deliver events, and acting on them would tear
+    // down the connection that replaced it.
+    ws.onopen = () => {
+      if (this.websocket === ws) {
+        // The handshake is done, but the server has not yet said whether this
+        // player is welcome. Start the keep-alive and wait to hear back.
+        this.startPing();
       }
+    };
+    ws.onmessage = (msg) => {
+      if (this.websocket === ws) {
+        this.onWebSocketMessage(msg);
+      }
+    };
+    ws.onerror = () => {
+      // Nothing to do here: an error is always followed by a close, which is
+      // where reconnection is handled.
+      if (DEBUG) {
+        console.log("Websocket error on the connection to " + lobby + ".");
+      }
+    };
+    ws.onclose = (event) => {
+      if (this.websocket === ws) {
+        this.websocket = undefined;
+        this.onWebSocketClose(event);
+      }
+    };
+
+    return true;
+  }
+
+  /**
+   * Called on the first packet from the server, which is the point at which the
+   * connection is known to have been accepted rather than merely opened.
+   * @effects clears the reconnection state and tells the player they are back.
+   */
+  onConnectionConfirmed() {
+    this.connectionConfirmed = true;
+    this.reconnectAttempts = 0;
+    this.firstFailureTime = 0;
+    if (this.state.connectionLost) {
+      this.showSnackBar("Reconnected.");
+    }
+    if (
+      this.state.connectionLost ||
+      this.state.joinError !== "" ||
+      this.state.createLobbyError !== ""
+    ) {
       this.setState({
-        name: name,
-        lobby: lobby,
-        usernames: [],
-        joinName: "",
-        joinLobby: "",
+        connectionLost: false,
         joinError: "",
-        createLobbyName: "",
         createLobbyError: "",
       });
-      ws.onmessage = (msg) => this.onWebSocketMessage(msg);
-      ws.onclose = () => this.onWebSocketClose();
-
-      // Ping the web server at a set interval.
-      if (this.pingInterval) {
-        clearInterval(this.pingInterval);
-      }
-      this.pingInterval = setInterval(() => {
-        this.sendWSCommand({ command: WSCommandType.PING });
-      }, PING_INTERVAL);
-
-      return true;
-    } else {
-      return false;
     }
   }
 
   /**
    * Called when the websocket closes.
-   * @effects attempts to reopen the websocket connection.
-   *          If the user pressed the "Leave Lobby" button or a maximum number of attempts has been reached
-   *          ({@code MAX_FAILED_CONNECTIONS}), does not reopen the websocket connection and returns the user to the
-   *          login screen with a relevant error message.
+   * @param event the close event, whose reason says whether the server refused
+   *              this connection and why.
+   * @effects reconnects, unless the player closed the connection deliberately or
+   *          the server gave a reason that reconnecting cannot get past.
    */
-  onWebSocketClose() {
-    // Clear the server ping interval when the socket is closed.
-    if (this.pingInterval) {
-      clearInterval(this.pingInterval);
+  onWebSocketClose(event: CloseEvent) {
+    this.stopPing();
+
+    const reason = parseCloseReason(event ? event.reason : "");
+    if (DEBUG) {
+      console.log(
+        "The websocket closed (code " +
+          (event ? event.code : "?") +
+          ', reason "' +
+          (event ? event.reason : "") +
+          '").'
+      );
     }
 
-    console.log(
-      "A websocket closed: " +
-        this.websocket?.url +
-        ". Reopening to current lobby " +
-        this.state.lobby
-    );
-    //
-
-    if (
-      this.reconnectOnConnectionClosed &&
-      this.failedConnections < MAX_FAILED_CONNECTIONS
-    ) {
-      if (this.failedConnections >= 1) {
-        // Only show the error bar if the first attempt has failed.
-        this.showSnackBar("Lost connection to the server: retrying...");
-        ReactGA.event({
-          category: "Lost Server Connection",
-          action: "User lost connection to the server. (>1 attempts)",
-        });
-      }
-      this.failedConnections += 1;
-      this.tryOpenWebSocket(this.state.name, this.state.lobby);
-    } else if (this.reconnectOnConnectionClosed) {
-      if (DEBUG) {
-        console.log("Disconnecting from lobby.");
-      }
-      this.setState({
-        joinName: this.state.name,
-        joinLobby: this.state.lobby,
-        joinError: "Disconnected from the lobby.",
-        page: PAGE.LOGIN,
-      });
-      ReactGA.event({
-        category: "Lost Server Connection (Terminal)",
-        action:
-          "User was unable to reconnect to the server. (max attempts reached)",
-      });
-      this.clearAnimationQueue();
-    } else {
-      // User purposefully closed the connection.
-      if (this.gameOver) {
-        // Do not reopen if the game is over, since disconnecting is intentional.
-      } else {
+    if (!this.reconnectOnConnectionClosed) {
+      // The player left the lobby, or the game ended and disconnecting is expected.
+      if (!this.gameOver) {
         this.setState({
           page: PAGE.LOGIN,
-          joinName: this.state.name,
-          joinLobby: this.state.lobby,
+          joinName: this.connectionName,
+          joinLobby: this.connectionLobby,
           joinError: "",
+          connectionLost: false,
         });
         this.clearAnimationQueue();
       }
+      return;
+    }
+
+    if (this.state.page === PAGE.LOGIN) {
+      // The connection closed before the player ever reached the lobby, so this is
+      // a login that was turned away rather than a connection that was lost.
+      // Retrying would leave them watching "Connecting..." with no explanation.
+      this.reportLoginFailure(reason);
+      return;
+    }
+
+    if (TERMINAL_CLOSE_REASONS[reason] !== undefined) {
+      this.giveUpReconnecting(TERMINAL_CLOSE_REASONS[reason], reason);
+      return;
+    }
+
+    this.scheduleReconnect();
+  }
+
+  /**
+   * Shows why a login attempt was turned away, on whichever half of the login page
+   * the player was using.
+   * @param reason the machine-readable close reason, which is empty when the
+   *               connection simply failed.
+   */
+  reportLoginFailure(reason: string) {
+    this.clearReconnectTimer();
+    this.reconnectAttempts = 0;
+    this.firstFailureTime = 0;
+    const message =
+      TERMINAL_CLOSE_REASONS[reason] ||
+      "There was an error connecting to the server. Please try again.";
+    if (this.state.createLobbyError !== "") {
+      this.setState({ createLobbyError: message });
+    } else {
+      this.setState({
+        joinName: this.connectionName,
+        joinLobby: this.connectionLobby,
+        joinError: message,
+      });
     }
   }
 
+  /**
+   * Queues another connection attempt, backing off a little further each time.
+   * @effects schedules a reconnect, or returns the player to the login page if
+   *          the connection has been down for too long. Time spent with the page
+   *          hidden does not count towards that, so a tab left in the background
+   *          is still trying when the player comes back to it.
+   */
+  scheduleReconnect() {
+    if (this.reconnectTimer) {
+      return; // an attempt is already queued
+    }
+
+    const now = Date.now();
+    if (this.firstFailureTime === 0) {
+      this.firstFailureTime = now;
+    }
+    if (
+      this.isPageVisible() &&
+      now - this.firstFailureTime > RECONNECT_GIVE_UP_AFTER
+    ) {
+      this.giveUpReconnecting("Disconnected from the lobby.", "timed-out");
+      return;
+    }
+
+    if (this.reconnectAttempts >= 1 && !this.state.connectionLost) {
+      this.setState({ connectionLost: true });
+      ReactGA.event({
+        category: "Lost Server Connection",
+        action: "User lost connection to the server. (>1 attempts)",
+      });
+    }
+
+    // The first retry is immediate: the usual cause is a connection the server
+    // has just closed and will accept again straight away.
+    const delay =
+      this.reconnectAttempts === 0
+        ? 0
+        : Math.min(
+            RECONNECT_BASE_DELAY * Math.pow(2, this.reconnectAttempts - 1),
+            RECONNECT_MAX_DELAY
+          );
+    // Spread out the retries of everyone who dropped at once, so a server coming
+    // back up is not hit by the whole lobby on the same tick.
+    const jitter = Math.random() * delay * 0.3;
+    this.reconnectAttempts += 1;
+
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = undefined;
+      this.tryOpenWebSocket(this.connectionName, this.connectionLobby);
+    }, delay + jitter);
+  }
+
+  /**
+   * Stops trying to reconnect and returns the player to the login page.
+   * @param message the explanation to show on the login page.
+   * @param reason the machine-readable reason, for analytics.
+   */
+  giveUpReconnecting(message: string, reason: string) {
+    if (DEBUG) {
+      console.log("Giving up on the connection: " + reason);
+    }
+    this.clearReconnectTimer();
+    this.stopPing();
+    this.reconnectAttempts = 0;
+    this.firstFailureTime = 0;
+    this.setState({
+      joinName: this.connectionName,
+      joinLobby: this.connectionLobby,
+      joinError: message,
+      page: PAGE.LOGIN,
+      connectionLost: false,
+    });
+    ReactGA.event({
+      category: "Lost Server Connection (Terminal)",
+      action: "User was unable to reconnect to the server. (" + reason + ")",
+    });
+    this.clearAnimationQueue();
+  }
+
+  /**
+   * Whether there is a connection that can be sent on right now.
+   */
+  isConnectionOpen() {
+    return (
+      this.websocket !== undefined &&
+      this.websocket.readyState === WebSocket.OPEN
+    );
+  }
+
+  isPageVisible() {
+    return (
+      typeof document.visibilityState === "undefined" ||
+      document.visibilityState === "visible"
+    );
+  }
+
+  /**
+   * Detaches and closes the current websocket without triggering a reconnect.
+   */
+  closeCurrentWebSocket() {
+    const ws = this.websocket;
+    this.websocket = undefined;
+    this.stopPing();
+    if (!ws) {
+      return;
+    }
+    ws.onopen = null;
+    ws.onmessage = null;
+    ws.onerror = null;
+    ws.onclose = null;
+    try {
+      ws.close();
+    } catch (e) {
+      // Already gone; nothing to close.
+    }
+  }
+
+  /**
+   * Starts a connection attempt if there is not already a connection or a queued
+   * attempt.
+   */
+  ensureConnected() {
+    if (
+      !this.reconnectOnConnectionClosed ||
+      this.reconnectTimer ||
+      this.state.page === PAGE.LOGIN ||
+      this.connectionLobby === ""
+    ) {
+      return;
+    }
+    if (
+      this.websocket &&
+      (this.websocket.readyState === WebSocket.OPEN ||
+        this.websocket.readyState === WebSocket.CONNECTING)
+    ) {
+      return;
+    }
+    this.tryOpenWebSocket(this.connectionName, this.connectionLobby);
+  }
+
+  /**
+   * Checks that the connection is really still alive, and reconnects if not.
+   * @effects Called when the player comes back to the page or the network returns.
+   *          A page that has been suspended often has a websocket that still
+   *          reports itself as open but is long dead, so this asks the server to
+   *          prove otherwise rather than trusting readyState.
+   */
+  verifyConnection() {
+    if (this.state.page === PAGE.LOGIN || !this.reconnectOnConnectionClosed) {
+      return;
+    }
+    const now = Date.now();
+    if (now - this.lastVerifyTime < VERIFY_DEBOUNCE) {
+      return;
+    }
+    this.lastVerifyTime = now;
+
+    // The player is back and watching, so start their patience over.
+    this.reconnectAttempts = 0;
+    this.firstFailureTime = 0;
+    this.clearPongTimer();
+
+    if (!this.isConnectionOpen()) {
+      this.clearReconnectTimer();
+      this.ensureConnected();
+      return;
+    }
+
+    // Ask for a fresh copy of the state in case anything was missed, and ping so
+    // that a connection that has quietly died is noticed within PONG_TIMEOUT.
+    this.sendWSCommand({ command: WSCommandType.GET_STATE });
+    this.sendPing();
+  }
+
+  onVisibilityChange() {
+    if (this.isPageVisible()) {
+      this.verifyConnection();
+    }
+  }
+
+  componentDidMount() {
+    // Coming back to a page that was hidden, restored from the back/forward
+    // cache, or offline are all moments when the connection is likely to be dead
+    // without the browser having said so.
+    document.addEventListener("visibilitychange", this.onVisibilityChange);
+    window.addEventListener("focus", this.verifyConnection);
+    window.addEventListener("pageshow", this.verifyConnection);
+    window.addEventListener("online", this.verifyConnection);
+  }
+
+  componentWillUnmount() {
+    document.removeEventListener("visibilitychange", this.onVisibilityChange);
+    window.removeEventListener("focus", this.verifyConnection);
+    window.removeEventListener("pageshow", this.verifyConnection);
+    window.removeEventListener("online", this.verifyConnection);
+    this.clearReconnectTimer();
+    this.stopPing();
+  }
+
+  //////// Keep-alive
+
+  startPing() {
+    this.stopPing();
+    this.pingInterval = setInterval(() => this.sendPing(), PING_INTERVAL);
+  }
+
+  stopPing() {
+    if (this.pingInterval) {
+      clearInterval(this.pingInterval);
+      this.pingInterval = undefined;
+    }
+    this.clearPongTimer();
+  }
+
+  clearPongTimer() {
+    if (this.pongTimer) {
+      clearTimeout(this.pongTimer);
+      this.pongTimer = undefined;
+    }
+  }
+
+  clearReconnectTimer() {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
+    }
+  }
+
+  /**
+   * Pings the server and, if the page is visible, starts waiting for a reply.
+   * @effects if nothing comes back within {@code PONG_TIMEOUT} the connection is
+   *          treated as dead and reopened. The wait is skipped while the page is
+   *          hidden, because a hidden tab has its timers throttled and a late
+   *          reply there proves nothing.
+   */
+  sendPing() {
+    if (!this.isConnectionOpen()) {
+      this.ensureConnected();
+      return;
+    }
+    this.sendWSCommand({ command: WSCommandType.PING });
+
+    if (!this.isPageVisible() || this.pongTimer) {
+      return;
+    }
+    this.pongTimer = setTimeout(() => {
+      this.pongTimer = undefined;
+      console.log("The server stopped replying; reopening the connection.");
+      this.tryOpenWebSocket(this.connectionName, this.connectionLobby);
+    }, PONG_TIMEOUT);
+  }
+
   async onWebSocketMessage(msg: MessageEvent) {
-    this.failedConnections = 0;
+    // Any traffic at all proves the connection is alive and was accepted.
+    this.clearPongTimer();
+    if (!this.connectionConfirmed) {
+      this.onConnectionConfirmed();
+    }
     let message = JSON.parse(msg.data);
     // Decode message contents as communication is encoded
     if (DEBUG) {
@@ -506,12 +870,20 @@ class App extends Component<{}, AppState> {
     if (DEBUG) {
       console.log(JSON.stringify(data));
     }
-    if (this.websocket !== undefined) {
-      this.websocket.send(JSON.stringify(data));
-    } else {
-      this.showSnackBar(
-        "Could not connect to the server. Try refreshing the page if this happens again."
-      );
+    if (!this.isConnectionOpen()) {
+      if (request.command !== WSCommandType.PING) {
+        this.showSnackBar("Not connected to the server: reconnecting...");
+      }
+      this.ensureConnected();
+      return;
+    }
+    try {
+      this.websocket!.send(JSON.stringify(data));
+    } catch (e) {
+      // The socket died between the readyState check and the send.
+      console.error("Failed to send a command to the server.", e);
+      this.showSnackBar("Not connected to the server: reconnecting...");
+      this.tryOpenWebSocket(this.connectionName, this.connectionLobby);
     }
   }
 
@@ -565,8 +937,10 @@ class App extends Component<{}, AppState> {
    * Attempts to connect to the lobby via websocket.
    */
   onClickJoin = () => {
-    this.setState({ joinError: "Connecting..." });
-    this.tryLogin(this.state.joinName, this.state.joinLobby)
+    const joinName = this.state.joinName;
+    const joinLobby = this.state.joinLobby;
+    this.setState({ joinError: "Connecting...", createLobbyError: "" });
+    this.tryLogin(joinName, joinLobby)
       .then((response) => {
         if (!response.ok) {
           if (DEBUG) {
@@ -582,7 +956,7 @@ class App extends Component<{}, AppState> {
             this.setState({
               joinError:
                 "There is already a user with the name '" +
-                this.state.joinName +
+                joinName +
                 "' in the lobby.",
             });
             ReactGA.event({
@@ -613,17 +987,16 @@ class App extends Component<{}, AppState> {
           }
         } else {
           // Username and lobby were verified. Try to open websocket.
-          if (
-            !this.tryOpenWebSocket(this.state.joinName, this.state.joinLobby)
-          ) {
+          if (!this.tryOpenWebSocket(joinName, joinLobby)) {
             this.setState({
               joinError:
                 "There was an error connecting to the server. Please try again.",
             });
           } else {
-            // Save the username and lobby login
-            Cookies.set(COOKIE_NAME, this.state.name, { expires: 7 });
-            Cookies.set(COOKIE_LOBBY, this.state.joinLobby);
+            // Save the username and lobby login. Read from the local values
+            // rather than state, which tryOpenWebSocket has just replaced.
+            Cookies.set(COOKIE_NAME, joinName, { expires: 7 });
+            Cookies.set(COOKIE_LOBBY, joinLobby, { expires: 7 });
           }
         }
       })
@@ -639,12 +1012,13 @@ class App extends Component<{}, AppState> {
    * Attempts to connect to the server and create a new lobby, and then opens a connection to the lobby.
    */
   onClickCreateLobby = () => {
-    this.setState({ createLobbyError: "Connecting..." });
+    const createLobbyName = this.state.createLobbyName;
+    this.setState({ createLobbyError: "Connecting...", joinError: "" });
     this.tryCreateLobby()
       .then((response) => {
         if (response.ok) {
           response.text().then((lobbyCode) => {
-            if (!this.tryOpenWebSocket(this.state.createLobbyName, lobbyCode)) {
+            if (!this.tryOpenWebSocket(createLobbyName, lobbyCode)) {
               // if the connection failed
               this.setState({
                 createLobbyError:
@@ -659,9 +1033,10 @@ class App extends Component<{}, AppState> {
                 category: "Lobby Created",
                 action: "Successfully created new lobby.",
               });
-              // Save the username and lobby login
-              Cookies.set(COOKIE_NAME, this.state.name, { expires: 7 });
-              Cookies.set(COOKIE_LOBBY, lobbyCode);
+              // Save the username and lobby login. Read from the local value
+              // rather than state, which tryOpenWebSocket has just replaced.
+              Cookies.set(COOKIE_NAME, createLobbyName, { expires: 7 });
+              Cookies.set(COOKIE_LOBBY, lobbyCode, { expires: 7 });
             }
           });
         } else {
@@ -842,8 +1217,16 @@ class App extends Component<{}, AppState> {
   }
 
   onClickLeaveLobby() {
-    this.websocket?.close();
+    // Set this first: close() can deliver its event before the next statement.
     this.reconnectOnConnectionClosed = false;
+    // Tell the server this is a deliberate exit so it frees the seat straight
+    // away, rather than holding it open for a reconnect that is not coming.
+    if (this.isConnectionOpen()) {
+      this.sendWSCommand({ command: WSCommandType.LEAVE_LOBBY });
+    }
+    this.clearReconnectTimer();
+    this.stopPing();
+    this.websocket?.close();
   }
 
   onClickCopy() {
@@ -1464,6 +1847,8 @@ class App extends Component<{}, AppState> {
                   buttonOnClick={() => {
                     this.gameOver = false;
                     this.reconnectOnConnectionClosed = true;
+                    this.reconnectAttempts = 0;
+                    this.firstFailureTime = 0;
                     this.tryOpenWebSocket(this.state.name, this.state.lobby);
                     this.hideAlertAndFinish();
                     this.setState({
@@ -1493,6 +1878,8 @@ class App extends Component<{}, AppState> {
           });
           this.gameOver = true;
           this.reconnectOnConnectionClosed = false;
+          this.clearReconnectTimer();
+          this.stopPing();
           this.websocket?.close();
           break;
 
@@ -1829,6 +2216,11 @@ class App extends Component<{}, AppState> {
         }}
       >
         <HelmetMetaData />
+        {this.state.connectionLost && (
+          <div id="connection-banner">
+            Reconnecting to the server&hellip;
+          </div>
+        )}
         {page_render}
       </RoleVisibilityContext.Provider>
     );

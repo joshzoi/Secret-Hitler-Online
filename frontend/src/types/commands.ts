@@ -7,6 +7,9 @@ export const enum WSCommandType {
   REGISTER_PRESIDENT_VETO = "president-veto",
   REGISTER_PEEK = "register-peek",
   END_TERM = "end-term",
+  // Leave the lobby on purpose, so the seat is freed rather than held open for
+  // a reconnect that is not coming.
+  LEAVE_LOBBY = "leave-lobby",
   // Select an icon
   SELECT_ICON = "select-icon",
   // Select a player
@@ -30,6 +33,7 @@ export type ServerRequestPayload =
   | { command: WSCommandType.REGISTER_PRESIDENT_VETO; veto: boolean }
   | { command: WSCommandType.REGISTER_PEEK }
   | { command: WSCommandType.END_TERM }
+  | { command: WSCommandType.LEAVE_LOBBY }
   | { command: WSCommandType.SELECT_ICON; icon: string }
   | { command: WSCommandType.NOMINATE_CHANCELLOR; target: string }
   | { command: WSCommandType.REGISTER_EXECUTION; target: string }

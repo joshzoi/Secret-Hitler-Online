@@ -274,3 +274,27 @@ textarea {
     background: var(--buttonAltFill);
     box-shadow: 0 0 0 var(--buttonAltShadowFill);
 }
+
+/* Shown across the top of every page while the connection to the server is down
+   and being retried, so a stalled game is distinguishable from one where nobody
+   has taken their turn yet. */
+#connection-banner {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 200;
+    padding: 8px;
+    text-align: center;
+    background-color: var(--buttonShadowFill);
+    color: var(--textColorWhite);
+    font-family: var(--textFont);
+    font-size: calc(2px + 2vmin);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+    animation: connection-banner-fadein 0.3s;
+}
+
+@keyframes connection-banner-fadein {
+    from {opacity: 0;}
+    to {opacity: 1;}
+}
