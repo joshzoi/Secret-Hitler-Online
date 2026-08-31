@@ -84,7 +84,6 @@ import { defaultPortrait } from "./assets";
 import Player from "./player/Player";
 import LoginPageContent from "./LoginPageContent";
 import Cookies from "js-cookie";
-import AnnouncementBox from "./util/AnnouncementBox";
 import {
   GameState,
   LobbyState,
@@ -679,13 +678,13 @@ class App extends Component<{}, AppState> {
   renderLoginPage() {
     return (
       <div className="App">
-        <header className="App-header">SECRET-HITLER.ONLINE</header>
+        <header className="App-header">Secret Hitler</header>
         <br />
         <div style={{ textAlign: "center" }}>
           {/** TODO: Add reusable announcement component. 
                     <div style={{backgroundColor: "#222222", width: "50vmin", margin: "0 auto", padding: "20px"}}>
                         <p>
-                            Hello! Secret Hitler Online is currently undergoing some maintenance.
+                            Hello! Secret Hitler is currently undergoing some maintenance.
                             Sorry for the interruption and please check back in in a few hours! -Shrimp
                         </p>
                         <p style={{fontStyle: "italic", fontSize: "calc(8px + 1vmin)"}}>(DATE TIME PM PT)</p>
@@ -733,29 +732,6 @@ class App extends Component<{}, AppState> {
             CREATE LOBBY
           </button>
         </div>
-        <AnnouncementBox>
-          <h2>Announcing: BOTS!</h2>
-          <p>
-            You can now start games with only 1-4 players; extra spots will be
-            filled by bots.
-          </p>
-          <p>
-            Bots are still in beta, so{" "}
-            <a
-              href={
-                "https://github.com/ShrimpCryptid/Secret-Hitler-Online/issues/44"
-              }
-              target={"_blank"}
-              rel="noreferrer"
-            >
-              leave feedback on GitHub!
-            </a>
-          </p>
-          <p style={{ fontStyle: "italic", fontSize: "calc(8px + 1vmin)" }}>
-            (Please be nice, they are trying their best.)
-          </p>
-        </AnnouncementBox>
-        <br />
         <LoginPageContent />
       </div>
     );
@@ -874,7 +850,7 @@ class App extends Component<{}, AppState> {
       this.state.usernames[0] === this.state.name;
     return (
       <div className="App">
-        <header className="App-header">SECRET-HITLER.ONLINE</header>
+        <header className="App-header">Secret Hitler</header>
 
         <CustomAlert show={this.state.showAlert}>
           {this.state.alertContent}
@@ -906,7 +882,9 @@ class App extends Component<{}, AppState> {
             <textarea
               id="linkText"
               readOnly={true}
-              value={"https://secret-hitler.online/?lobby=" + this.state.lobby}
+              value={
+                window.location.origin + "/?lobby=" + this.state.lobby
+              }
             />
             <button onClick={this.onClickCopy}>COPY</button>
           </div>
@@ -942,26 +920,11 @@ class App extends Component<{}, AppState> {
             <div id={"lobby-text-container"}>
               <p id={"lobby-about-text"}>
                 <a
-                  href={
-                    "https://github.com/ShrimpCryptid/Secret-Hitler-Online/blob/main/README.md"
-                  }
+                  href={"https://github.com/joshzoi/Secret-Hitler-Online"}
                   target={"_blank"}
                   rel="noopener noreferrer"
                 >
                   About this project
-                </a>
-              </p>
-              <br />
-              <p id={"lobby-warning-text"}>
-                You can report bugs on the{" "}
-                <a
-                  href={
-                    "https://github.com/ShrimpCryptid/Secret-Hitler-Online/issues"
-                  }
-                  rel="noopener noreferrer"
-                  target={"_blank"}
-                >
-                  Issues page.
                 </a>
               </p>
             </div>
@@ -1698,7 +1661,7 @@ class App extends Component<{}, AppState> {
   renderGamePage() {
     return (
       <div className="App" style={{ textAlign: "center" }}>
-        <header className="App-header">SECRET-HITLER.ONLINE</header>
+        <header className="App-header">Secret Hitler</header>
 
         <CustomAlert show={this.state.showAlert}>
           {this.state.alertContent}

@@ -31,9 +31,9 @@ class LoginPageContent extends Component {
             <>
                 <div id={"#login-page-description-container"}>
                     <div id={"login-page-description-text-container"}>
-                        <h2 id={"login-page-description-text-header"}>What is Secret Hitler Online?</h2>
+                        <h2 id={"login-page-description-text-header"}>What is Secret Hitler?</h2>
                         <p id={"login-page-description-text"}>
-                            Secret Hitler Online is an adaptation of the original Secret Hitler board game,
+                            This is an adaptation of the original Secret Hitler board game,
                             reimagined for the web.
                             It supports up to 10 players, featuring smooth art and animations with all the secrecy and
                             intrigue of the original. It's designed to be easy to pick up and play for any quarantine
@@ -49,7 +49,7 @@ class LoginPageContent extends Component {
                             <br/>
                             The project is open-source, and is licensed under CC BY-NC-SA 4.0.
                             You can read more about the project <a
-                                href={"https://github.com/ShrimpCryptid/Secret-Hitler-Online/"}
+                                href={"https://github.com/joshzoi/Secret-Hitler-Online"}
                                 rel="noreferrer"
                                 target={"_blank"} onClick={this.onClickAbout}>
                                     on GitHub
@@ -57,11 +57,8 @@ class LoginPageContent extends Component {
                             <br/><br/>
                             Adapted from the original <a href={"https://secrethitler.com"} target={"_blank"} rel="noreferrer" onClick={this.onClickGameWebsite}>
                                 Secret Hitler
-                            </a> board game by Goat, Wolf, & Cabbage (© 2016-2020). Developed by ShrimpCryptid (© 2020-2023).
-                            <br/><br/>
-                            Found a bug or want to leave a comment? Report bugs on the <a href={"https://github.com/ShrimpCryptid/Secret-Hitler-Online/issues"}
-                                                                                             rel="noreferrer"
-                                                                                             target={"_blank"}>Issues page</a>.
+                            </a> board game by Goat, Wolf, & Cabbage (© 2016-2020). Developed by ShrimpCryptid (© 2020-2023),
+                            with additional features by joshzoi.
                         </p>
                         <br/>
                     </div>

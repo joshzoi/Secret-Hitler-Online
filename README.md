@@ -22,7 +22,7 @@ The Java server is divided into the [game simulation](src/main/java/game) and th
 The [webpage](/secret-hitler-online-interface) is written in [React](https://reactjs.org/), and features animations created with CSS. Assets were either adapted from the original board game or created using [Inkscape](https://inkscape.org/).
 
 ### Creative Commons License and Credit
-Secret Hitler Online is licensed under [Creative Commons BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/), and is adapted from the original board game released by Goat, Wolf & Cabbage (© 2016-2020). 
+Secret Hitler Online is licensed under [Creative Commons BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/), and is adapted from the original board game released by Goat, Wolf & Cabbage (© 2016-2020). It was created by [ShrimpCryptid](https://github.com/ShrimpCryptid) (© 2020-2023); this fork adds further features, maintained by [joshzoi](https://github.com/joshzoi). 
 
 *(This project is not affiliated with or endorsed by Goat, Wolf & Cabbage.)*
 
@@ -33,4 +33,3 @@ Secret Hitler Online is licensed under [Creative Commons BY-NC-SA 4.0](https://c
 - Where possible, fonts were replaced with ones licensed under the [Open Font License](https://scripts.sil.org/cms/scripts/page.php?site_id=nrsi&id=OFL), namely [Germania One](https://fonts.google.com/specimen/Germania+One) and [Montserrat](https://fonts.google.com/specimen/Montserrat).
 - The web interface, animations, and server are new additions that use the same rules from the original game.
 
-### Report problems or suggest features on the [Issues page](https://github.com/ShrimpCryptid/Secret-Hitler-Online/issues).
