@@ -801,9 +801,6 @@ class App extends Component<{}, AppState> {
           playerToIcon={this.state.icons}
           players={this.state.usernames}
           user={this.state.name}
-          onClickTweet={() => {
-            ReactGA.event({ category: "Sharing", action: "User shared tweet" });
-          }}
         />
       ),
     });
