@@ -20,3 +20,6 @@ bin
 
 # Node
 **/node_modules/
+
+# Local deployment configuration (see .env.example)
+/.env

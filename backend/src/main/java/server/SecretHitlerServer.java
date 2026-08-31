@@ -128,7 +128,9 @@ public class SecretHitlerServer {
                     });
                 } else {
                     cors.add(it -> {
-                        it.allowHost("https://secret-hitler.online");
+                        for (String origin : ApplicationConfig.getAllowedOrigins()) {
+                            it.allowHost(origin);
+                        }
                     });
                 }
             });

@@ -9,12 +9,24 @@ export enum PAGE {
 }
 
 export const DEBUG = process.env.REACT_APP_DEBUG !== undefined;
-export const SERVER_ADDRESS =
-  process.env.REACT_APP_SERVER_ADDRESS || "secret-hitler-online.fly.dev";
-export const SERVER_ADDRESS_HTTP =
-  process.env.REACT_APP_SERVER_ADDRESS_HTTP || "https://" + SERVER_ADDRESS;
-export const WEBSOCKET_HEADER =
-  process.env.REACT_APP_WEBSOCKET_HEADER || "wss://";
+
+// Set when the frontend is served from the same origin as the backend, i.e.
+// behind a reverse proxy that forwards /check-login, /new-lobby, /ping and the
+// /game websocket through to the Java server. The addresses are then read from
+// window.location at runtime, so a single build works for any hostname.
+const SAME_ORIGIN = process.env.REACT_APP_SAME_ORIGIN === "true";
+
+export const SERVER_ADDRESS = SAME_ORIGIN
+  ? window.location.host
+  : process.env.REACT_APP_SERVER_ADDRESS || "secret-hitler-online.fly.dev";
+export const SERVER_ADDRESS_HTTP = SAME_ORIGIN
+  ? window.location.origin
+  : process.env.REACT_APP_SERVER_ADDRESS_HTTP || "https://" + SERVER_ADDRESS;
+export const WEBSOCKET_HEADER = SAME_ORIGIN
+  ? window.location.protocol === "https:"
+    ? "wss://"
+    : "ws://"
+  : process.env.REACT_APP_WEBSOCKET_HEADER || "wss://";
 
 export const CHECK_LOGIN = "/check-login";
 export const NEW_LOBBY = "/new-lobby";

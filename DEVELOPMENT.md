@@ -12,6 +12,9 @@
   - In frontend/: `npm install && npm run devLocal`
   - Open frontend: [http://localhost:3000](http://localhost:3000)
 
+To run the app for real rather than for development — one hostname, HTTPS,
+behind your own reverse proxy — see [SELF_HOSTING.md](SELF_HOSTING.md).
+
 Your setup will vary depending on if you're only making changes to the frontend, or if you're making changes to the frontend and the backend at once.
 
 ## Frontend Only

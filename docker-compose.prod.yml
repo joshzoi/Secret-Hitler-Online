@@ -1,0 +1,68 @@
+# Production stack for self-hosting behind a reverse proxy that terminates TLS
+# (Nginx Proxy Manager, Traefik, Caddy, a Cloudflare Tunnel, ...).
+#
+#   cp .env.example .env   # then edit it
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# Only `web` is published, and it speaks plain HTTP. Point the proxy at
+# ${WEB_BIND}:${WEB_PORT} and let it serve 443. It must forward the websocket
+# upgrade headers, or joining a lobby will hang. See SELF_HOSTING.md.
+#
+# docker-compose.yml is the hot-reloading development stack and is unaffected.
+
+# Distinct project name so this stack's network and volumes never collide with
+# the development stack's, which compose would otherwise name from the folder.
+name: secret-hitler-online-prod
+
+services:
+  db:
+    image: postgres:15
+    container_name: sh-postgres-prod
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-secret}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-secrethitler}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-secret} -d ${POSTGRES_DB:-secrethitler}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.prod
+    container_name: sh-backend-prod
+    restart: unless-stopped
+    environment:
+      PORT: "8080"
+      DATABASE_URL: postgres://${POSTGRES_USER:-secret}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-secrethitler}
+      # Only consulted for cross-origin requests. `web` serves the frontend from
+      # the same origin, so this matters only if the backend is reached directly.
+      ALLOWED_ORIGINS: ${PUBLIC_ORIGIN:?set PUBLIC_ORIGIN in .env, e.g. https://insertyourdomainhere.com}
+    depends_on:
+      db:
+        condition: service_healthy
+    # Give the shutdown hook room to back the lobbies up to Postgres.
+    stop_grace_period: 30s
+
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: sh-web-prod
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "${WEB_BIND:-0.0.0.0}:${WEB_PORT:-8080}:80"
+
+volumes:
+  db-data: {}

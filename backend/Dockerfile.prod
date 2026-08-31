@@ -1,0 +1,18 @@
+# Self-contained build for docker compose: compiles the fat jar from source and
+# runs it on a JRE-only image. The neighbouring Dockerfile instead expects a jar
+# that was already built on the host (see DEPLOYMENT.md), which is what the
+# Fly.io deploy uses.
+
+FROM gradle:8.6.0-jdk17 AS build
+WORKDIR /app
+COPY . .
+RUN ./gradlew jar --no-daemon
+
+FROM ibm-semeru-runtimes:open-17-jre-focal
+ENV PORT 8080
+EXPOSE 8080
+COPY --from=build /app/build/libs/secret-hitler-online.jar /secret-hitler-online.jar
+# Exec form so the JVM is PID 1 and receives SIGTERM directly. With the shell
+# form the signal stops at `sh`, and the shutdown hook that backs lobbies up to
+# Postgres never runs, losing games in progress on every restart.
+CMD ["java", "-jar", "/secret-hitler-online.jar"]

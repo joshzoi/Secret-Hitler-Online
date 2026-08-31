@@ -1,0 +1,7 @@
+build
+out
+bin
+.gradle
+Dockerfile
+Dockerfile.prod
+.dockerignore
