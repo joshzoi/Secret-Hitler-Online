@@ -60,4 +60,7 @@ export type SendWSCommand = (payload: ServerRequestPayload) => void;
 export type WSCommand = {
   name: string;
   lobby: string;
+  /* Identifies this command. The server echoes it in the 'ok' it sends back, so
+     the client can tell which command that 'ok' is answering. */
+  "request-id": number;
 } & ServerRequestPayload;

@@ -59,6 +59,8 @@ import {
   CLOSE_BAD_REQUEST,
   CLOSE_REPLACED,
   PARAM_CLIENT_ID,
+  PARAM_REQUEST_ID,
+  SERVER_TIMEOUT,
   SERVER_PING,
   PARAM_ICON,
   PARAM_INVESTIGATION,
@@ -165,6 +167,23 @@ function parseCloseReason(reason: string | undefined): string {
   return separator === -1 ? reason : reason.substring(0, separator);
 }
 
+/* Commands the client sends to keep itself healthy, as opposed to the player
+   acting on the game. Only a real action closes an action prompt or holds one
+   back; housekeeping traffic must never stand in for one. */
+const HOUSEKEEPING_COMMANDS: string[] = [
+  WSCommandType.PING,
+  WSCommandType.GET_STATE,
+  WSCommandType.LEAVE_LOBBY,
+];
+
+/**
+ * Whether a command is the player acting on the game.
+ * @param command the command being sent.
+ */
+function isPlayerAction(command: WSCommandType): boolean {
+  return !HOUSEKEEPING_COMMANDS.includes(command);
+}
+
 if (DEBUG) {
   console.warn("Running in debug mode.");
 }
@@ -268,9 +287,30 @@ class App extends Component<{}, AppState> {
   reconnectOnConnectionClosed: boolean = true;
   snackbarMessages: number = 0;
   animationQueue: (() => void)[] = [];
-  okMessageListeners: (() => void)[] = [];
   allAnimationsFinished: boolean = true;
   gameOver: boolean = false;
+  /* Callbacks waiting on the server's acknowledgement of one particular command,
+     keyed by the request id it was sent with. Keying them is what stops an
+     unrelated "ok" -- a get-state on returning to the tab, say -- from standing
+     in for the one an action prompt is waiting on and closing it unanswered. */
+  pendingAcks: Map<number, () => void> = new Map();
+  nextRequestId: number = 1;
+  /* Set while an action prompt is on screen that should close once the action
+     sent from it is acknowledged, so each action sent from that prompt waits on
+     its own reply. Cleared when the prompt closes. */
+  closeAlertOnAck: boolean = false;
+  /* Mirrors state.showAlert without waiting for a render, so a check for whether
+     a prompt is already up is right in the same tick that one was shown. */
+  alertShowing: boolean = false;
+  /* True from sending an action until the state that accounts for it arrives, so
+     the prompt for an action already on its way is not offered a second time. */
+  actionInFlight: boolean = false;
+  actionInFlightTimer?: NodeJS.Timeout = undefined;
+  /* The most recent game state, mirrored outside of component state. Animations
+     triggered while a packet is being handled can finish before the setState
+     carrying that packet has been applied, so this is what tells them which
+     actions are still outstanding. */
+  latestGameState: GameState = DEFAULT_GAME_STATE;
 
   // noinspection DuplicatedCode
   constructor(props: any) {
@@ -312,6 +352,7 @@ class App extends Component<{}, AppState> {
     this.onClickChangeIcon = this.onClickChangeIcon.bind(this);
     this.onClickToggleHideRole = this.onClickToggleHideRole.bind(this);
     this.setPeekingRole = this.setPeekingRole.bind(this);
+    this.reconcileActionPrompt = this.reconcileActionPrompt.bind(this);
 
     // Ping the server to wake it up if it's not currently being used
     // This reduces the delay users experience when starting lobbies
@@ -638,6 +679,9 @@ class App extends Component<{}, AppState> {
     const ws = this.websocket;
     this.websocket = undefined;
     this.stopPing();
+    // Nothing sent on the old connection is going to be answered now.
+    this.pendingAcks.clear();
+    this.clearActionInFlight();
     if (!ws) {
       return;
     }
@@ -812,19 +856,35 @@ class App extends Component<{}, AppState> {
         break;
 
       case PACKET_GAME_STATE:
+        // The state now accounts for anything already sent, so a prompt held back
+        // for an action in flight can be offered again if it is still owed.
+        this.clearActionInFlight();
+        this.latestGameState = message;
         if (message !== this.state.gameState) {
           this.onGameStateChanged(message);
         }
-        this.setState({ gameState: message, page: PAGE.GAME });
+        this.setState({ gameState: message, page: PAGE.GAME }, () =>
+          this.reconcileActionPrompt()
+        );
         break;
 
-      case PACKET_OK: // Traverse all listeners and call the functions.
-        let i = 0;
-        for (i; i < this.okMessageListeners.length && i < 1; i++) {
-          this.okMessageListeners[i]();
+      case PACKET_OK: {
+        // Answer only the command this "ok" names. One connection's commands are
+        // handled in order, so anything still waiting from before it never will
+        // be. An "ok" without an id is from an older server: nothing to match, so
+        // nothing is closed on the strength of it.
+        const requestId = message[PARAM_REQUEST_ID];
+        const onAck = this.pendingAcks.get(requestId);
+        this.pendingAcks.forEach((_, id) => {
+          if (id <= requestId) {
+            this.pendingAcks.delete(id);
+          }
+        });
+        if (onAck !== undefined) {
+          onAck();
         }
-        this.okMessageListeners = []; // clear all listeners.
         break;
+      }
 
       case PACKET_INVESTIGATION:
         // Trigger investigation screen when the server responds.
@@ -861,10 +921,12 @@ class App extends Component<{}, AppState> {
    */
   sendWSCommand(request: ServerRequestPayload) {
     // Do not need to encode name + lobby because this is sent through websocket
+    const requestId = this.nextRequestId++;
     const data: WSCommand = {
       ...request,
       name: this.state.name,
       lobby: this.state.lobby,
+      [PARAM_REQUEST_ID]: requestId,
     };
 
     if (DEBUG) {
@@ -884,7 +946,45 @@ class App extends Component<{}, AppState> {
       console.error("Failed to send a command to the server.", e);
       this.showSnackBar("Not connected to the server: reconnecting...");
       this.tryOpenWebSocket(this.connectionName, this.connectionLobby);
+      return;
     }
+
+    if (!isPlayerAction(request.command)) {
+      return;
+    }
+    // The action is on its way. Hold the prompt for it back until the state that
+    // accounts for it arrives, and close the prompt it was sent from when this
+    // command in particular is acknowledged -- not on the next "ok" to turn up.
+    this.setActionInFlight();
+    if (this.closeAlertOnAck) {
+      // Stays armed until the prompt actually closes, so a retry after a send
+      // that never got out waits on the reply to the attempt that did.
+      this.pendingAcks.set(requestId, () => this.hideAlertAndFinish(false));
+    }
+  }
+
+  /**
+   * Records that an action has been sent and the game state has not caught up.
+   * @effects holds back the prompt for that action until the next state packet,
+   *          or until {@code SERVER_TIMEOUT} passes if no state ever arrives, so
+   *          a command the server dropped is eventually offered again.
+   */
+  setActionInFlight() {
+    this.clearActionInFlight();
+    this.actionInFlight = true;
+    this.actionInFlightTimer = setTimeout(() => {
+      this.actionInFlightTimer = undefined;
+      this.actionInFlight = false;
+      this.reconcileActionPrompt();
+    }, SERVER_TIMEOUT);
+  }
+
+  clearActionInFlight() {
+    if (this.actionInFlightTimer) {
+      clearTimeout(this.actionInFlightTimer);
+      this.actionInFlightTimer = undefined;
+    }
+    this.actionInFlight = false;
   }
 
   //</editor-fold>
@@ -1392,6 +1492,150 @@ class App extends Component<{}, AppState> {
   }
 
   /**
+   * Returns the prompt for whatever action the player still owes the game.
+   * @param state {Object} the game state to read.
+   * @return the prompt for the action this player has yet to take, or undefined
+   *         if they are only waiting on somebody else. This is derived from the
+   *         state alone rather than from a change in it, so the same answer holds
+   *         for a state that has merely been re-sent -- which is what lets a
+   *         prompt be offered again after an action failed to reach the server.
+   */
+  getPendingActionPrompt(state: GameState): React.JSX.Element | undefined {
+    const name = this.state.name;
+    const player = state.players[name];
+    if (player === undefined || !player[PLAYER_IS_ALIVE]) {
+      return undefined; // never in the game, or executed: never asked to act
+    }
+    const isPresident = name === state.president;
+    const isChancellor = name === state.chancellor;
+
+    switch (state.state) {
+      case STATE_CHANCELLOR_NOMINATION:
+        return isPresident
+          ? SelectNominationPrompt(name, state, this.sendWSCommand)
+          : undefined;
+
+      case STATE_CHANCELLOR_VOTING:
+        // A vote already registered with the server is not asked for again.
+        return Object.keys(state.userVotes).includes(name) ? undefined : (
+          <VotingPrompt
+            gameState={state}
+            sendWSCommand={this.sendWSCommand}
+            user={name}
+          />
+        );
+
+      case STATE_LEGISLATIVE_PRESIDENT:
+        if (!isPresident) {
+          return undefined;
+        }
+        if (!state.presidentChoices) {
+          console.error("President choices not found.");
+          return undefined;
+        }
+        return (
+          <PresidentLegislativePrompt
+            policyOptions={state.presidentChoices}
+            sendWSCommand={this.sendWSCommand}
+          />
+        );
+
+      case STATE_LEGISLATIVE_CHANCELLOR:
+        if (!isChancellor) {
+          return undefined;
+        }
+        if (!state.chancellorChoices) {
+          console.error("Chancellor choices not found.");
+          return undefined;
+        }
+        return (
+          <ChancellorLegislativePrompt
+            fascistPolicies={state.fascistPolicies}
+            showError={(message: string) =>
+              this.setState({ snackbarMessage: message })
+            }
+            policyOptions={state.chancellorChoices}
+            sendWSCommand={this.sendWSCommand}
+            // Disable if veto has already happened
+            enableVeto={state.fascistPolicies === 5 && !state.vetoOccurred}
+          />
+        );
+
+      case STATE_LEGISLATIVE_PRESIDENT_VETO:
+        return isPresident ? (
+          <VetoPrompt
+            sendWSCommand={this.sendWSCommand}
+            electionTracker={state.electionTracker}
+          />
+        ) : undefined;
+
+      case STATE_PP_PEEK:
+        if (!isPresident) {
+          return undefined;
+        }
+        if (!state.peek) {
+          console.error("Peek policies not found.");
+          return undefined;
+        }
+        return (
+          <PeekPrompt policies={state.peek} sendWSCommand={this.sendWSCommand} />
+        );
+
+      case STATE_PP_ELECTION:
+        return isPresident
+          ? SelectSpecialElectionPrompt(name, state, this.sendWSCommand)
+          : undefined;
+
+      case STATE_PP_EXECUTION:
+        return isPresident
+          ? SelectExecutionPrompt(name, state, this.sendWSCommand)
+          : undefined;
+
+      case STATE_PP_INVESTIGATE:
+        return isPresident
+          ? SelectInvestigationPrompt(name, state, this.sendWSCommand)
+          : undefined;
+
+      default:
+        // Every other state is one the player can only wait out.
+        return undefined;
+    }
+  }
+
+  /**
+   * Queues the prompt for the action the player owes in {@code state}, if any.
+   * @param state {Object} the game state to read.
+   */
+  queueActionPrompt(state: GameState) {
+    const prompt = this.getPendingActionPrompt(state);
+    if (prompt !== undefined) {
+      this.queueAlert(prompt);
+    }
+  }
+
+  /**
+   * Offers the prompt for an action the player still owes but has nothing on
+   * screen to make it with.
+   * @effects shows that prompt, if the client is otherwise idle. Prompts are
+   *          normally raised by a change of state, so an action that never
+   *          reached the server -- sent on a connection that had quietly died,
+   *          say -- would otherwise leave the player waiting on a prompt that is
+   *          never coming back, with the rest of the table waiting on them.
+   */
+  reconcileActionPrompt() {
+    if (
+      this.state.page !== PAGE.GAME ||
+      this.gameOver ||
+      this.alertShowing ||
+      !this.allAnimationsFinished ||
+      this.actionInFlight
+    ) {
+      return;
+    }
+    this.queueActionPrompt(this.latestGameState);
+  }
+
+  /**
    * Queues animations for when the game state has changed.
    * @param newState {Object} the new game state sent from the server.
    */
@@ -1399,7 +1643,6 @@ class App extends Component<{}, AppState> {
     let oldState = this.state.gameState;
     let name = this.state.name;
     let isPresident = this.state.name === newState.president;
-    let isChancellor = this.state.name === newState.chancellor;
     let state = newState.state;
 
     // If last state was setup, which indicates that the client is re-entering the game or starting the game, then
@@ -1509,12 +1752,8 @@ class App extends Component<{}, AppState> {
             "Waiting for president to nominate a chancellor."
           );
 
-          if (isPresident) {
-            //Show the chancellor nomination window.
-            this.queueAlert(
-              SelectNominationPrompt(name, newState, this.sendWSCommand)
-            );
-          }
+          //Show the chancellor nomination window (to the president only).
+          this.queueActionPrompt(newState);
 
           break;
 
@@ -1522,20 +1761,8 @@ class App extends Component<{}, AppState> {
           this.setState({ statusBarText: "" });
           this.queueEventUpdate("VOTING");
           this.queueStatusMessage("Waiting for all players to vote.");
-          // Check if the player is dead or has already voted-- if so, do not show the voting prompt.
-          if (
-            newState.players[name][PLAYER_IS_ALIVE] &&
-            !Object.keys(newState.userVotes).includes(name)
-          ) {
-            this.queueAlert(
-              <VotingPrompt
-                gameState={newState}
-                sendWSCommand={this.sendWSCommand}
-                user={this.state.name}
-              />,
-              true
-            );
-          }
+          // A player who is dead, or who has already voted, is not asked to.
+          this.queueActionPrompt(newState);
 
           break;
 
@@ -1550,17 +1777,7 @@ class App extends Component<{}, AppState> {
             "Waiting for the president to choose a policy to discard."
           );
 
-          if (isPresident) {
-            if (!newState.presidentChoices) {
-              throw new Error("President choices not found.");
-            }
-            this.queueAlert(
-              <PresidentLegislativePrompt
-                policyOptions={newState.presidentChoices}
-                sendWSCommand={this.sendWSCommand}
-              />
-            );
-          }
+          this.queueActionPrompt(newState);
 
           break;
 
@@ -1568,55 +1785,20 @@ class App extends Component<{}, AppState> {
           this.queueStatusMessage(
             "Waiting for the chancellor to choose a policy to enact."
           );
-          if (isChancellor) {
-            if (!newState.chancellorChoices) {
-              throw new Error("Chancellor choices not found.");
-            }
-            this.queueAlert(
-              <ChancellorLegislativePrompt
-                fascistPolicies={newState.fascistPolicies}
-                showError={(message: string) =>
-                  this.setState({ snackbarMessage: message })
-                }
-                policyOptions={newState.chancellorChoices}
-                sendWSCommand={this.sendWSCommand}
-                // Disable if veto has already happened
-                enableVeto={
-                  newState.fascistPolicies === 5 && !newState.vetoOccurred
-                }
-              />
-            );
-          }
+          this.queueActionPrompt(newState);
           break;
 
         case STATE_LEGISLATIVE_PRESIDENT_VETO:
           this.queueStatusMessage(
             "Chancellor has motioned to veto the agenda. Waiting for the president to decide."
           );
-          if (isPresident) {
-            this.queueAlert(
-              <VetoPrompt
-                sendWSCommand={this.sendWSCommand}
-                electionTracker={newState.electionTracker}
-              />,
-              true
-            );
-          }
+          this.queueActionPrompt(newState);
           break;
 
         case STATE_PP_PEEK:
           this.queueEventUpdate("PRESIDENTIAL POWER");
           if (isPresident) {
-            if (!newState.peek) {
-              throw new Error("Peek policies not found.");
-            }
-            this.queueAlert(
-              <PeekPrompt
-                policies={newState.peek}
-                sendWSCommand={this.sendWSCommand}
-              />,
-              true
-            );
+            this.queueActionPrompt(newState);
           } else {
             this.queueStatusMessage(
               "Peek: President is previewing the next 3 policies."
@@ -1627,9 +1809,7 @@ class App extends Component<{}, AppState> {
         case STATE_PP_ELECTION:
           this.queueEventUpdate("PRESIDENTIAL POWER");
           if (isPresident) {
-            this.queueAlert(
-              SelectSpecialElectionPrompt(name, newState, this.sendWSCommand)
-            );
+            this.queueActionPrompt(newState);
           } else {
             this.queueStatusMessage(
               "Special Election: President is choosing the next president."
@@ -1640,10 +1820,7 @@ class App extends Component<{}, AppState> {
         case STATE_PP_EXECUTION:
           this.queueEventUpdate("PRESIDENTIAL POWER");
           if (isPresident) {
-            this.queueAlert(
-              SelectExecutionPrompt(name, newState, this.sendWSCommand),
-              true
-            );
+            this.queueActionPrompt(newState);
           } else {
             this.queueStatusMessage(
               "Execution: President is choosing a player to execute."
@@ -1654,9 +1831,7 @@ class App extends Component<{}, AppState> {
         case STATE_PP_INVESTIGATE:
           this.queueEventUpdate("PRESIDENTIAL POWER");
           if (isPresident) {
-            this.queueAlert(
-              SelectInvestigationPrompt(name, newState, this.sendWSCommand)
-            );
+            this.queueActionPrompt(newState);
           } else {
             this.queueStatusMessage(
               "Investigation: President is choosing a player to investigate."
@@ -1916,6 +2091,9 @@ class App extends Component<{}, AppState> {
       // the animation queue is empty, so we set a flag.
       this.allAnimationsFinished = true;
       this.setState({ allAnimationsFinished: true });
+      // Nothing left to play: the right moment to notice that the player still
+      // owes the game an action and has nothing on screen to make it with.
+      this.reconcileActionPrompt();
     }
   }
 
@@ -1926,6 +2104,8 @@ class App extends Component<{}, AppState> {
     this.allAnimationsFinished = true;
     this.setState({ allAnimationsFinished: true });
     this.animationQueue = [];
+    this.alertShowing = false;
+    this.closeAlertOnAck = false;
   }
 
   /**
@@ -1983,16 +2163,6 @@ class App extends Component<{}, AppState> {
   }
 
   /**
-   * Adds a listener to be called when the server returns an 'OK' status.
-   * @param func The function to be called.
-   * @effects adds the listener to the queue of functions. When the server returns an 'OK' status, all of the
-   *          listeners will be called and then cleared from the queue.
-   */
-  addServerOKListener(func: () => void) {
-    this.okMessageListeners.push(func);
-  }
-
-  /**
    * Hides the CustomAlert and marks this animation as finished.
    * @param delayExit {boolean} When true, delays advancing the animation queue until after the alert is hidden.
    * @effects: Sets {@code this.state.showAlert} to false and hides the CustomAlert.
@@ -2000,6 +2170,8 @@ class App extends Component<{}, AppState> {
    *           Otherwise, immediately queues the next animation.
    */
   hideAlertAndFinish(delayExit = true) {
+    this.alertShowing = false;
+    this.closeAlertOnAck = false;
     this.setState({ showAlert: false });
     if (delayExit) {
       setTimeout(() => {
@@ -2045,15 +2217,16 @@ class App extends Component<{}, AppState> {
    */
   queueAlert(content: React.JSX.Element, closeOnOK = true) {
     this.addAnimationToQueue(() => {
+      this.alertShowing = true;
       this.setState({
         alertContent: content,
         showAlert: true,
       });
-      if (closeOnOK) {
-        // Remove the exit delay if waiting for the server response, because otherwise the player will lag
-        // behind everyone else.
-        this.addServerOKListener(() => this.hideAlertAndFinish(false));
-      }
+      // Arm the close without committing to any particular reply yet: the prompt
+      // closes when the action sent from it is acknowledged, which sendWSCommand
+      // arranges once it knows which command that is. Waiting on the next "ok"
+      // instead used to close prompts the player had not answered.
+      this.closeAlertOnAck = closeOnOK;
     });
   }
 

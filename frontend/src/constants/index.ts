@@ -91,6 +91,7 @@ export const PARAM_NAME = "name";
 export const PARAM_LOBBY = "lobby";
 export const PARAM_ICON = "icon"; // id of the selected portrait.
 export const PARAM_CLIENT_ID = "client-id"; // identifies this browser to the server.
+export const PARAM_REQUEST_ID = "request-id"; // identifies a single command, echoed back in its 'ok'.
 export const PARAM_VOTE = "vote";
 export const PARAM_VETO = "veto"; // the veto decision (yes/no)
 export const PARAM_CHOICE = "choice"; // the index of the chosen policy.
