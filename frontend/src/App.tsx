@@ -1138,7 +1138,7 @@ class App extends Component<{}, AppState> {
       return (
         <Player
           key={i}
-          name={i === 0 ? name : name + " [Host]"}
+          name={i === 0 ? name + " [Host]" : name}
           showRole={false}
           icon={this.state.icons[name]}
           isBusy={this.state.icons[name] === defaultPortrait}
@@ -1257,8 +1257,8 @@ class App extends Component<{}, AppState> {
   }
 
   renderLobbyPage() {
-    // The first player in the lobby is counted as the VIP.
-    let isVIP =
+    // The first player in the lobby is the host.
+    let isHost =
       this.state.usernames.length > 0 &&
       this.state.usernames[0] === this.state.name;
     return (
@@ -1319,12 +1319,12 @@ class App extends Component<{}, AppState> {
             </div>
 
             <div id={"lobby-button-container"}>
-              {!isVIP && (
-                <p id={"lobby-vip-text"}>Only the VIP can start the game.</p>
+              {!isHost && (
+                <p id={"lobby-vip-text"}>Only the host can start the game.</p>
               )}
               <button
                 onClick={this.onClickStartGame}
-                disabled={!isVIP || !this.shouldStartGameBeEnabled()}
+                disabled={!isHost || !this.shouldStartGameBeEnabled()}
               >
                 START GAME
               </button>
