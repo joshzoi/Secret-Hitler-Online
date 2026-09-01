@@ -62,6 +62,14 @@ tasks.named('jar') {
   }
 }
 
+// CI builds and deploys on Java 11 (see .github/workflows/fly-deploy.yml), while the
+// Docker images build on a 17 JDK. Without this the language level follows whichever
+// JDK happens to be present, so code that compiles locally can fail the deploy.
+// --release also checks against the real Java 11 API, not just the syntax.
+tasks.withType(JavaCompile) {
+    options.release = 11
+}
+
 javadoc {
     options.tags = ["requires:a:Requires:", "modifies:a:Modifies:", "effects:a:Effects:"]
 }

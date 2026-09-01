@@ -2,6 +2,10 @@ package server;
 
 import game.datastructures.Identity;
 import io.javalin.Javalin;
+import server.auth.Auth;
+import server.auth.AuthRoutes;
+import server.auth.SessionStore;
+import server.auth.UserSession;
 import io.javalin.http.Context;
 import io.javalin.websocket.WsCloseContext;
 import io.javalin.websocket.WsConnectContext;
@@ -15,7 +19,6 @@ import org.slf4j.LoggerFactory;
 import server.util.Lobby;
 
 import java.io.*;
-import java.net.URI;
 import java.sql.*;
 
 import java.text.SimpleDateFormat;
@@ -31,6 +34,9 @@ public class SecretHitlerServer {
     // <editor-fold desc="Static Fields">
     // TODO: Replace this with an environment variable or environment flag
     public static final int DEFAULT_PORT_NUMBER = 4040;
+    /* Where the development frontend is served from. Named explicitly because a
+       cookie is not sent to a wildcard origin. */
+    private static final String DEBUG_ORIGIN = "http://localhost:3000";
 
     // Passed to server
     public static final String PARAM_LOBBY = "lobby";
@@ -143,6 +149,21 @@ public class SecretHitlerServer {
     }
 
     public static void main(String[] args) {
+        // Refuse to start on a configuration that cannot serve anyone, rather than
+        // coming up and turning every player away with nothing in the log to say why.
+        if (!ApplicationConfig.validate(System.err)) {
+            System.err.println("Refusing to start. See SELF_HOSTING.md for the required configuration.");
+            System.exit(1);
+        }
+        if (ApplicationConfig.DEBUG) {
+            logger.warn("DEBUG_MODE is set: CORS is relaxed and /auth/dev-login will sign in "
+                    + "anyone who asks. Never run a deployment like this.");
+        }
+
+        // Sign-in reads and writes the session table, so the schema has to exist
+        // before anything is served.
+        Database.initialize();
+
         // On load, check the connected database to see if there's a stored state from
         // the server.
         loadDatabaseBackup();
@@ -157,19 +178,22 @@ public class SecretHitlerServer {
             config.jetty.wsFactoryConfig(
                     factory -> factory.setIdleTimeout(Duration.ofSeconds(WEBSOCKET_IDLE_TIMEOUT_SECONDS)));
             config.plugins.enableCors(cors -> {
-                if (ApplicationConfig.DEBUG) {
-                    cors.add(it -> {
-                        it.anyHost();
-                    });
-                } else {
-                    cors.add(it -> {
-                        for (String origin : ApplicationConfig.getAllowedOrigins()) {
-                            it.allowHost(origin);
-                        }
-                    });
-                }
+                // Requests now carry a session cookie, and a browser refuses to send
+                // credentials to a wildcard origin. So even in development this has to
+                // name the origin rather than allowing any host, as it used to.
+                cors.add(it -> {
+                    if (ApplicationConfig.DEBUG) {
+                        it.allowHost(DEBUG_ORIGIN);
+                    }
+                    for (String origin : ApplicationConfig.getAllowedOrigins()) {
+                        it.allowHost(origin);
+                    }
+                    it.allowCredentials = true;
+                });
             });
         }).start(getHerokuAssignedPort());
+
+        AuthRoutes.register(serverApp);
 
         serverApp.get("/check-login", SecretHitlerServer::checkLogin); // Checks if a login is valid.
         serverApp.get("/new-lobby", SecretHitlerServer::createNewLobby); // Creates and returns the code for a new lobby
@@ -198,6 +222,8 @@ public class SecretHitlerServer {
             @Override
             public void run() {
                 removeInactiveLobbies();
+                SessionStore.removeExpiredSessions();
+                server.auth.PendingAuthStore.removeExpired();
                 if (!codeToLobby.isEmpty()) {
                     printLobbyStatus();
                 }
@@ -249,40 +275,6 @@ public class SecretHitlerServer {
     // <editor-fold desc="Database Handling">
 
     /**
-     * Attempts to get a connection to the PostGres database.
-     * 
-     * @return null if no connection could be made.
-     *         otherwise, returns a {@code java.sql.Connection} object.
-     */
-    private static Connection getDatabaseConnection() {
-        // Get credentials from database or (if debug flag is set) via manual input.
-        Connection c;
-        try {
-            URI databaseUri;
-            String envUri = ApplicationConfig.DATABASE_URI;
-            if (envUri == null) {
-                logger.error("Could not connect to database: No ENV_DATABASE_URL environment variable provided.");
-                return null;
-            }
-            databaseUri = new URI(envUri);
-
-            String username = databaseUri.getUserInfo().split(":")[0];
-            String password = databaseUri.getUserInfo().split(":")[1];
-            String dbUrl = "jdbc:postgresql://" + databaseUri.getHost() + ':' + databaseUri.getPort()
-                    + databaseUri.getPath();
-
-            Class.forName("org.postgresql.Driver");
-            c = DriverManager.getConnection(dbUrl, username, password);
-            logger.info("Successfully connected to database.");
-            return c;
-        } catch (Exception e) {
-            // Print failures no matter what
-            logger.error("Failed to connect to database.", e);
-            return null;
-        }
-    }
-
-    /**
      * Loads lobby data stored in the database (intended to be run on server wake).
      * 
      * @effects {@code codeToLobby} is set to the stored database
@@ -290,16 +282,13 @@ public class SecretHitlerServer {
     @SuppressWarnings("unchecked")
     private static void loadDatabaseBackup() {
         // Get connection to the Postgres Database and select the backup data.
-        Connection c = getDatabaseConnection();
+        Connection c = Database.getConnection();
         if (c == null) {
             return;
         }
         Statement stmt = null;
 
         try {
-            // Initialize table, just in case
-            initializeDatabase(c);
-
             stmt = c.createStatement();
             ResultSet rs = stmt.executeQuery("select * from backup;");
             rs.next(); // Will fail if there are no entries in the table, which is fine.
@@ -355,7 +344,7 @@ public class SecretHitlerServer {
         String timestamp = formatter.format(new Timestamp(System.currentTimeMillis()));
         int attempts = 0;
 
-        Connection c = getDatabaseConnection();
+        Connection c = Database.getConnection();
         if (c == null) {
             return;
         }
@@ -378,19 +367,6 @@ public class SecretHitlerServer {
             return;
         }
         logger.debug("Successfully saved Lobby state to the database.");
-    }
-
-    /**
-     * Initializes the database by adding the BACKUP table.
-     * 
-     * @param c the connection to the database.
-     * @effects the Postgres SQL datbase has a new
-     */
-    private static void initializeDatabase(Connection c) throws SQLException {
-        Statement stmt = c.createStatement();
-        stmt.executeUpdate("create table if not exists backup " +
-                "(id INT UNIQUE, timestamp TEXT, attempts INT, lobby_bytes BYTEA);");
-        stmt.close();
     }
 
     // </editor-fold>
