@@ -23,6 +23,15 @@
     width: 82%;
     left: 9%;
     top: 6.3%;
+    /* Slack avatars are square photographs. The hand-drawn portraits these
+       replaced had their rounded corners drawn into the artwork, so the corners
+       have to be rounded here instead to sit in the card's well. */
+    aspect-ratio: 1 / 1;
+    height: auto;
+    object-fit: cover;
+    border-radius: 8%;
+    /* What shows in the moment before the photo has loaded. */
+    background-color: var(--backgroundDark);
     -webkit-user-select: none;
     -moz-user-select: none;
     -ms-user-select: none;

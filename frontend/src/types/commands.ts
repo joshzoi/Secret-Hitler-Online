@@ -10,8 +10,6 @@ export const enum WSCommandType {
   // Leave the lobby on purpose, so the seat is freed rather than held open for
   // a reconnect that is not coming.
   LEAVE_LOBBY = "leave-lobby",
-  // Select an icon
-  SELECT_ICON = "select-icon",
   // Select a player
   NOMINATE_CHANCELLOR = "nominate-chancellor",
   REGISTER_EXECUTION = "register-execution",
@@ -34,7 +32,6 @@ export type ServerRequestPayload =
   | { command: WSCommandType.REGISTER_PEEK }
   | { command: WSCommandType.END_TERM }
   | { command: WSCommandType.LEAVE_LOBBY }
-  | { command: WSCommandType.SELECT_ICON; icon: string }
   | { command: WSCommandType.NOMINATE_CHANCELLOR; target: string }
   | { command: WSCommandType.REGISTER_EXECUTION; target: string }
   | { command: WSCommandType.REGISTER_SPECIAL_ELECTION; target: string }
@@ -49,16 +46,15 @@ export type SendWSCommand = (payload: ServerRequestPayload) => void;
  * A WebSocket command to send to the server.
  * @param {WSCommandType} command The command type.
  * @param {string} lobby The lobby to send the command to.
- * @param {string} name The name of the player sending the command.
  *
  * Optional, depending on command:
- * @param {number} icon The icon to select.
  * @param {string} target The target of the command. Used for powers and nominations.
  * @param {boolean} vote The vote to register.
  * @param {number} choice The policy index to register.
  */
 export type WSCommand = {
-  name: string;
+  /* Which lobby this is for. The player's identity is not sent: the server takes
+     it from the connection, which was authenticated when it was opened. */
   lobby: string;
   /* Identifies this command. The server echoes it in the 'ok' it sends back, so
      the client can tell which command that 'ok' is answering. */

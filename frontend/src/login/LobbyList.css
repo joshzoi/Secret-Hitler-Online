@@ -1,0 +1,62 @@
+#lobby-list {
+  margin: 0 auto;
+  max-width: 80vmin;
+}
+
+.lobby-list-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  margin: 8px 0;
+  background-color: var(--backgroundLight);
+  border-radius: 8px;
+}
+
+.lobby-list-code {
+  font-family: var(--headerFont);
+  font-size: calc(8px + 2vmin);
+  color: var(--textColorHighlight);
+  min-width: 4em;
+  text-align: left;
+}
+
+.lobby-list-count {
+  font-family: var(--textFont);
+  font-size: calc(6px + 1vmin);
+  min-width: 4em;
+}
+
+.lobby-list-avatars {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  flex-wrap: wrap;
+}
+
+.lobby-list-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  object-fit: cover;
+  background-color: var(--backgroundDark);
+}
+
+.lobby-list-more {
+  font-family: var(--textFont);
+  font-size: calc(5px + 1vmin);
+}
+
+/* Smaller than the main game buttons: this is a secondary action beside a list,
+   not the thing the player came to press. */
+.lobby-list-button {
+  font-size: calc(4px + 2vmin);
+  padding: 6px 16px;
+  margin: 4px;
+}
+
+#lobby-list-status {
+  font-family: var(--textFont);
+  font-size: calc(6px + 1vmin);
+}

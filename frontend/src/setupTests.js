@@ -11,8 +11,12 @@ import '@testing-library/jest-dom/extend-expect';
 beforeEach(() => {
   global.fetch = jest.fn(() =>
     Promise.resolve({
-      ok: true,
-      status: 200,
+      ok: false,
+      // Signed out unless a test says otherwise. The app asks who the player is
+      // before it shows anything, so this has to answer, and json() has to exist
+      // or that first call throws instead of resolving.
+      status: 401,
+      json: () => Promise.resolve({ signedIn: false }),
       text: () => Promise.resolve(''),
     })
   );

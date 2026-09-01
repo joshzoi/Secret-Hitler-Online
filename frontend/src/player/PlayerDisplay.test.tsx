@@ -33,14 +33,14 @@ const buildGameState = (
     (roles[viewer] === Role.HITLER && names.length <= 6);
 
   const players: GameState["players"] = {};
-  const icon: GameState["icon"] = {};
+  const avatars: GameState["avatars"] = {};
   names.forEach((name) => {
     players[name] = {
       id: name === viewer || showAllRoles ? roles[name] : undefined,
       alive: true,
       investigated: false,
     };
-    icon[name] = "p1";
+    avatars[name] = "https://avatars.slack-edge.com/" + name + "_192.png";
   });
   return {
     state,
@@ -60,7 +60,7 @@ const buildGameState = (
     discardSize: 0,
     lastPolicy: "",
     vetoOccurred: false,
-    icon,
+    avatars,
   };
 };
 

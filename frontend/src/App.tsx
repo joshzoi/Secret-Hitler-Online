@@ -3,7 +3,6 @@ import ReactGA from "react-ga";
 import "./App.css";
 import "./Lobby.css";
 import "./fonts.css";
-import MaxLengthTextField from "./util/MaxLengthTextField";
 import CustomAlert from "./custom-alert/CustomAlert";
 import RoleAlert from "./custom-alert/RoleAlert";
 import EventBar from "./event-bar/EventBar";
@@ -11,9 +10,6 @@ import EventBar from "./event-bar/EventBar";
 // TODO: replace constants with enums from types
 import {
   PAGE,
-  SERVER_ADDRESS_HTTP,
-  NEW_LOBBY,
-  CHECK_LOGIN,
   SERVER_ADDRESS,
   WEBSOCKET,
   PARAM_USERNAMES,
@@ -52,22 +48,21 @@ import {
   RECONNECT_MAX_DELAY,
   RECONNECT_GIVE_UP_AFTER,
   CLOSE_LOBBY_NOT_FOUND,
-  CLOSE_NAME_TAKEN,
   CLOSE_LOBBY_FULL,
   CLOSE_GAME_IN_PROGRESS,
   CLOSE_LOBBY_TIMED_OUT,
   CLOSE_BAD_REQUEST,
   CLOSE_REPLACED,
-  PARAM_CLIENT_ID,
   PARAM_REQUEST_ID,
   SERVER_TIMEOUT,
-  SERVER_PING,
-  PARAM_ICON,
   PARAM_INVESTIGATION,
   PACKET_ERROR,
   PARAM_MESSAGE,
+  PARAM_AVATARS,
+  PARAM_YOU,
   MIN_PLAYERS,
   MAX_PLAYERS,
+  CLOSE_UNAUTHENTICATED,
 } from "./constants";
 
 import PlayerDisplay, {
@@ -96,14 +91,25 @@ import PlayerPolicyStatus from "./util/PlayerPolicyStatus";
 
 import VictoryFascistHeader from "./assets/victory-fascist-header.png";
 import VictoryLiberalHeader from "./assets/victory-liberal-header.png";
-import IconSelection from "./custom-alert/IconSelection";
 import HelmetMetaData from "./util/HelmetMetaData";
-import { defaultPortrait } from "./assets";
 import Player from "./player/Player";
-import LoginPageContent from "./LoginPageContent";
 import Cookies from "js-cookie";
+import {
+  checkLogin,
+  createLobby,
+  getSession,
+  SessionExpiredError,
+  signOut,
+} from "./util/api";
+import {
+  consumeUrlParams,
+  rememberPendingLobby,
+  takePendingLobby,
+} from "./util/urlParams";
+import { AuthStatus, SessionUser } from "./types/auth";
+import SignInPage from "./login/SignInPage";
+import HomePage from "./login/HomePage";
 import { RoleVisibilityContext } from "./util/RoleVisibilityContext";
-import { getClientId } from "./util/clientId";
 import {
   GameState,
   LobbyState,
@@ -138,22 +144,45 @@ const DEFAULT_GAME_STATE: GameState = {
   targetUser: "",
   lastPolicy: "",
   peek: [],
-  icon: {},
+  avatars: {},
 };
 
-const COOKIE_NAME = "name";
-const COOKIE_LOBBY = "lobby";
+/* The one preference still worth keeping on the device. Identity comes from the
+   Slack session now, so the name and lobby cookies are gone. */
 const COOKIE_HIDE_ROLE = "hide-role";
+
+/* How long to wait before admitting that signing in is taking a while. A warm
+   server answers well within this, and a flash of the message is worse than
+   showing nothing. */
+const SLOW_SIGN_IN_NOTICE_DELAY = 600;
+
+/* What went wrong at Slack, in words meant for the player. The server sends a
+   short code so that its own wording, which is aimed at developers, never ends
+   up on the page. */
+const AUTH_ERROR_MESSAGES: { [reason: string]: string } = {
+  denied: "Sign-in was cancelled.",
+  expired: "That sign-in took too long. Please try again.",
+  wrong_workspace:
+    "That Slack account is not in this game's workspace. Sign in with your work account.",
+  slack: "Slack could not complete the sign-in. Please try again.",
+  bad_request: "Something went wrong signing in. Please try again.",
+  not_configured:
+    "This server has not been set up for Slack sign-in yet.",
+};
+
+function describeAuthError(reason: string): string {
+  return AUTH_ERROR_MESSAGES[reason] || "Sign-in failed. Please try again.";
+}
 
 /* Close reasons that reconnecting cannot get past. Anything else - a dropped
    network, a server restart, a browser suspending the page - is worth retrying. */
 const TERMINAL_CLOSE_REASONS: { [reason: string]: string } = {
   [CLOSE_LOBBY_NOT_FOUND]: "The lobby no longer exists.",
-  [CLOSE_NAME_TAKEN]: "Someone else is using that name in the lobby.",
   [CLOSE_LOBBY_FULL]: "The lobby is currently full.",
   [CLOSE_GAME_IN_PROGRESS]: "The lobby is currently in a game.",
   [CLOSE_LOBBY_TIMED_OUT]: "The lobby timed out.",
   [CLOSE_BAD_REQUEST]: "There was an error connecting to the server.",
+  [CLOSE_UNAUTHENTICATED]: "Your session expired. Please sign in again.",
   [CLOSE_REPLACED]: "This lobby was opened in another window.",
 };
 
@@ -199,16 +228,25 @@ if (DEBUG) {
 // TODO: Remove this type and replace with actual state variables.
 type AppState = {
   page: PAGE;
-  joinName: string;
+  /* Whether we know who the player is yet. Kept apart from PAGE, which says which
+     game screen is showing and is driven by packets from the server. */
+  authStatus: AuthStatus;
+  session?: SessionUser;
+  /* Why a sign-in did not work, shown on the sign-in screen. */
+  authError: string;
+  /* True when the server could not be reached at all, as opposed to refusing us.
+     That gets a retry rather than another trip to Slack. */
+  authUnreachable: boolean;
+  /* A lobby from an invite link, joined as soon as we know who the player is. */
+  pendingLobby?: string;
   joinLobby: string;
   joinError: string;
-  createLobbyName: string;
   createLobbyError: string;
+  /* The name the server gave this player in this lobby. Never typed by them. */
   name: string;
   lobby: string;
-  lobbyFromURL: boolean;
   usernames: string[];
-  icons: { [key: string]: string };
+  avatars: { [key: string]: string };
   gameState: GameState;
   /* Stores the last gameState[PARAM_STATE] value to check for changes. */
   lastState: any;
@@ -234,20 +272,24 @@ type AppState = {
   /* True while the connection to the server is down and being retried, so the
      player can see that the game is stalled rather than that nobody is moving. */
   connectionLost: boolean;
+  /* True once signing in has taken long enough to be worth mentioning. */
+  showSlowSignIn: boolean;
 };
 
 const defaultAppState: AppState = {
   page: PAGE.LOGIN,
-  joinName: "",
+  authStatus: "checking",
+  session: undefined,
+  authError: "",
+  authUnreachable: false,
+  pendingLobby: undefined,
   joinLobby: "",
   joinError: "",
-  createLobbyName: "",
   createLobbyError: "",
-  name: "P1",
-  lobby: "AAAAAA",
-  lobbyFromURL: false,
+  name: "",
+  lobby: "",
   usernames: [],
-  icons: {},
+  avatars: {},
   gameState: DEFAULT_GAME_STATE,
   lastState: {},
   liberalPolicies: 0,
@@ -266,13 +308,13 @@ const defaultAppState: AppState = {
   hideRole: false,
   peekingRole: false,
   connectionLost: false,
+  showSlowSignIn: false,
 };
 
 class App extends Component<{}, AppState> {
   websocket?: WebSocket = undefined;
   /* The credentials the current connection was opened with. Kept outside of
      component state so a reconnect never races a pending setState. */
-  connectionName: string = "";
   connectionLobby: string = "";
   reconnectAttempts: number = 0;
   /* Whether the server has accepted the current connection. The websocket "open"
@@ -315,19 +357,15 @@ class App extends Component<{}, AppState> {
      carrying that packet has been applied, so this is what tells them which
      actions are still outstanding. */
   latestGameState: GameState = DEFAULT_GAME_STATE;
+  /* Set while waiting to hear whether the player is signed in. */
+  slowSignInTimer?: NodeJS.Timeout = undefined;
 
   // noinspection DuplicatedCode
   constructor(props: any) {
     super(props);
 
-    let name = Cookies.get(COOKIE_NAME) ? Cookies.get(COOKIE_NAME) : "";
-    let lobby = Cookies.get(COOKIE_LOBBY) ? Cookies.get(COOKIE_LOBBY) : "";
-
     this.state = {
       ...defaultAppState,
-      joinName: name || "",
-      joinLobby: lobby || "",
-      createLobbyName: name || "",
       hideRole: Cookies.get(COOKIE_HIDE_ROLE) === "true",
     };
 
@@ -351,66 +389,117 @@ class App extends Component<{}, AppState> {
     this.addAnimationToQueue = this.addAnimationToQueue.bind(this);
     this.clearAnimationQueue = this.clearAnimationQueue.bind(this);
     this.queueAlert = this.queueAlert.bind(this);
-    this.showChangeIconAlert = this.showChangeIconAlert.bind(this);
-    this.updateChangeIconAlert = this.updateChangeIconAlert.bind(this);
-    this.onClickChangeIcon = this.onClickChangeIcon.bind(this);
     this.onClickToggleHideRole = this.onClickToggleHideRole.bind(this);
     this.setPeekingRole = this.setPeekingRole.bind(this);
     this.reconcileActionPrompt = this.reconcileActionPrompt.bind(this);
-
-    // Ping the server to wake it up if it's not currently being used
-    // This reduces the delay users experience when starting lobbies
-    fetch(SERVER_ADDRESS_HTTP + SERVER_PING);
+    this.handleSessionExpired = this.handleSessionExpired.bind(this);
+    this.onClickSignOut = this.onClickSignOut.bind(this);
+    this.onClickCreateLobby = this.onClickCreateLobby.bind(this);
+    this.joinLobby = this.joinLobby.bind(this);
+    this.loadSession = this.loadSession.bind(this);
+    this.updateJoinLobby = this.updateJoinLobby.bind(this);
   }
+
+  /////////// Signing in
+  // <editor-fold desc="Signing in">
+
+  /**
+   * Finds out who the player is.
+   *
+   * Runs before anything else is shown, so the sign-in screen does not flash up
+   * in front of somebody who is already signed in.
+   */
+  async loadSession() {
+    this.setState({ authStatus: "checking", authError: "", authUnreachable: false });
+    try {
+      const session = await getSession();
+      if (session === null) {
+        this.setState({ authStatus: "signed-out", session: undefined, name: "" });
+        return;
+      }
+      this.setState({
+        authStatus: "signed-in",
+        session,
+        name: session.name,
+        authError: "",
+        authUnreachable: false,
+      });
+
+      // An invite link followed before signing in. There is no name to type any
+      // more, so it can be acted on straight away.
+      const pending = this.state.pendingLobby ?? takePendingLobby();
+      if (pending) {
+        this.setState({ pendingLobby: undefined, joinLobby: pending });
+        this.joinLobby(pending);
+      }
+    } catch (e) {
+      // A server that cannot be reached is not the same as being signed out, and
+      // saying "you were signed out" to someone waiting on a cold start is wrong.
+      console.error("Could not check the sign-in status.", e);
+      this.setState({
+        authStatus: "signed-out",
+        session: undefined,
+        authUnreachable: true,
+        authError: "Couldn't reach the server. It may still be waking up.",
+      });
+    }
+  }
+
+  /**
+   * Gives up on the current session and sends the player back to signing in.
+   *
+   * @effects tears down the connection first, so the reconnect loop cannot bring
+   *          a dead session back to life, then shows the sign-in screen.
+   */
+  handleSessionExpired() {
+    this.reconnectOnConnectionClosed = false;
+    this.clearReconnectTimer();
+    this.stopPing();
+    this.closeCurrentWebSocket();
+    this.clearAnimationQueue();
+    this.setState({
+      page: PAGE.LOGIN,
+      authStatus: "signed-out",
+      session: undefined,
+      name: "",
+      connectionLost: false,
+      showAlert: false,
+      authUnreachable: false,
+      authError: "Your session expired. Please sign in again.",
+    });
+  }
+
+  async onClickSignOut() {
+    // Close the socket before revoking the session, so the reconnect logic does
+    // not immediately try to open another one with a cookie that no longer works.
+    this.reconnectOnConnectionClosed = false;
+    this.clearReconnectTimer();
+    this.stopPing();
+    this.closeCurrentWebSocket();
+    await signOut();
+    this.setState({
+      ...defaultAppState,
+      hideRole: this.state.hideRole,
+      authStatus: "signed-out",
+    });
+  }
+
+  //</editor-fold>
 
   /////////// Server Communication
   // <editor-fold desc="Server Communication">
 
   /**
-   * Attempts to request the server to create a new lobby and returns the response.
-   * @return {Promise<Response>}
-   */
-  async tryCreateLobby() {
-    return fetch(SERVER_ADDRESS_HTTP + NEW_LOBBY);
-  }
-
-  /**
-   * Checks if the login is valid.
-   * @param name the name of the user.
-   * @param lobby the lobby code.
-   * @return {Promise<Response>} The response from the server.
-   */
-  async tryLogin(name: string, lobby: string) {
-    ReactGA.event({
-      category: "Login Attempt",
-      action: "User attempted to provide login credentials to the server.",
-    });
-    return await fetch(
-      SERVER_ADDRESS_HTTP +
-        CHECK_LOGIN +
-        "?name=" +
-        encodeURIComponent(name) +
-        "&lobby=" +
-        encodeURIComponent(lobby) +
-        "&" +
-        PARAM_CLIENT_ID +
-        "=" +
-        encodeURIComponent(getClientId())
-    );
-  }
-
-  /**
    * Attempts to open a WebSocket with the server.
-   * @param name the name of the user to connect with.
-   * @param lobby the lobby to connect with.
-   * @effects Opens a connection and records {@code name} and {@code lobby} as the
-   *          credentials to reconnect with. The page is not moved on until the
-   *          server actually accepts the connection, so a refused login leaves the
-   *          player on the login page rather than flashing them into the lobby.
+   * @param lobby the lobby to connect to.
+   * @effects Opens a connection and records {@code lobby} as the one to reconnect
+   *          to. Who the player is comes from the session cookie the handshake
+   *          carries, not from the URL. The page is not moved on until the server
+   *          actually accepts the connection, so a refused login leaves the player
+   *          where they were rather than flashing them into the lobby.
    * @return {boolean} true if the connection could be started. Otherwise, false.
    */
-  tryOpenWebSocket(name: string, lobby: string) {
-    this.connectionName = name;
+  tryOpenWebSocket(lobby: string) {
     this.connectionLobby = lobby;
     // Opening a connection at all means the player wants to be in this lobby, so
     // a later drop should be reconnected rather than treated as them leaving.
@@ -418,18 +507,14 @@ class App extends Component<{}, AppState> {
     this.clearReconnectTimer();
     this.closeCurrentWebSocket();
 
+    // Only the lobby. The session cookie rides along with the handshake, so no
+    // credential ever appears in a URL, a log, or the browser's history.
     let url =
       WEBSOCKET_HEADER +
       SERVER_ADDRESS +
       WEBSOCKET +
-      "?name=" +
-      encodeURIComponent(name) +
-      "&lobby=" +
-      encodeURIComponent(lobby) +
-      "&" +
-      PARAM_CLIENT_ID +
-      "=" +
-      encodeURIComponent(getClientId());
+      "?lobby=" +
+      encodeURIComponent(lobby);
     if (DEBUG) {
       console.log("Opening connection to lobby " + lobby + " at " + url);
     }
@@ -445,7 +530,8 @@ class App extends Component<{}, AppState> {
 
     this.websocket = ws;
     this.connectionConfirmed = false;
-    this.setState({ name: name, lobby: lobby });
+    // The name is not ours to choose; it arrives with the first packet.
+    this.setState({ lobby: lobby });
 
     // Every handler checks that this is still the current socket. A socket that
     // has been replaced can still deliver events, and acting on them would tear
@@ -515,6 +601,12 @@ class App extends Component<{}, AppState> {
     this.stopPing();
 
     const reason = parseCloseReason(event ? event.reason : "");
+    if (reason === CLOSE_UNAUTHENTICATED) {
+      // Checked before anything else: this is final wherever it turns up, and
+      // retrying it would spin against a session that will never work again.
+      this.handleSessionExpired();
+      return;
+    }
     if (DEBUG) {
       console.log(
         "The websocket closed (code " +
@@ -530,7 +622,6 @@ class App extends Component<{}, AppState> {
       if (!this.gameOver) {
         this.setState({
           page: PAGE.LOGIN,
-          joinName: this.connectionName,
           joinLobby: this.connectionLobby,
           joinError: "",
           connectionLost: false,
@@ -573,7 +664,6 @@ class App extends Component<{}, AppState> {
       this.setState({ createLobbyError: message });
     } else {
       this.setState({
-        joinName: this.connectionName,
         joinLobby: this.connectionLobby,
         joinError: message,
       });
@@ -628,7 +718,7 @@ class App extends Component<{}, AppState> {
 
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = undefined;
-      this.tryOpenWebSocket(this.connectionName, this.connectionLobby);
+      this.tryOpenWebSocket(this.connectionLobby);
     }, delay + jitter);
   }
 
@@ -646,7 +736,6 @@ class App extends Component<{}, AppState> {
     this.reconnectAttempts = 0;
     this.firstFailureTime = 0;
     this.setState({
-      joinName: this.connectionName,
       joinLobby: this.connectionLobby,
       joinError: message,
       page: PAGE.LOGIN,
@@ -720,7 +809,7 @@ class App extends Component<{}, AppState> {
     ) {
       return;
     }
-    this.tryOpenWebSocket(this.connectionName, this.connectionLobby);
+    this.tryOpenWebSocket(this.connectionLobby);
   }
 
   /**
@@ -769,18 +858,65 @@ class App extends Component<{}, AppState> {
     // without the browser having said so.
     document.addEventListener("visibilitychange", this.onVisibilityChange);
     window.addEventListener("focus", this.verifyConnection);
-    window.addEventListener("pageshow", this.verifyConnection);
+    window.addEventListener("pageshow", this.onPageShow);
     window.addEventListener("online", this.verifyConnection);
+
+    // Read here rather than in the constructor: StrictMode runs a constructor
+    // twice in development, and this both writes to history and starts a request.
+    const params = consumeUrlParams();
+    if (params.lobby) {
+      rememberPendingLobby(params.lobby);
+    }
+    const pending = params.lobby ?? takePendingLobby();
+    this.setState({
+      pendingLobby: pending,
+      joinLobby: pending ?? "",
+      authError: params.authError ? describeAuthError(params.authError) : "",
+    });
+
+    // Only say anything if it is taking long enough to notice. A warm server
+    // answers well inside this, and a flash of "signing you in" is worse than
+    // nothing at all.
+    this.slowSignInTimer = setTimeout(
+      () => this.setState({ showSlowSignIn: true }),
+      SLOW_SIGN_IN_NOTICE_DELAY
+    );
+    this.loadSession().finally(() => {
+      if (this.slowSignInTimer) {
+        clearTimeout(this.slowSignInTimer);
+        this.slowSignInTimer = undefined;
+      }
+      this.setState({ showSlowSignIn: false });
+    });
   }
 
   componentWillUnmount() {
     document.removeEventListener("visibilitychange", this.onVisibilityChange);
     window.removeEventListener("focus", this.verifyConnection);
-    window.removeEventListener("pageshow", this.verifyConnection);
+    window.removeEventListener("pageshow", this.onPageShow);
     window.removeEventListener("online", this.verifyConnection);
     this.clearReconnectTimer();
+    if (this.slowSignInTimer) {
+      clearTimeout(this.slowSignInTimer);
+    }
     this.stopPing();
   }
+
+  /**
+   * Handles the page being shown, including from the back/forward cache.
+   *
+   * A page restored from that cache has the JavaScript state it had when the
+   * player navigated away -- which, coming back from Slack, is from before they
+   * signed in. Checking again avoids showing a signed-out page to somebody who
+   * has just signed in.
+   */
+  onPageShow = (event: PageTransitionEvent) => {
+    if (event && event.persisted) {
+      this.loadSession();
+      return;
+    }
+    this.verifyConnection();
+  };
 
   //////// Keep-alive
 
@@ -831,7 +967,7 @@ class App extends Component<{}, AppState> {
     this.pongTimer = setTimeout(() => {
       this.pongTimer = undefined;
       console.log("The server stopped replying; reopening the connection.");
-      this.tryOpenWebSocket(this.connectionName, this.connectionLobby);
+      this.tryOpenWebSocket(this.connectionLobby);
     }, PONG_TIMEOUT);
   }
 
@@ -850,13 +986,12 @@ class App extends Component<{}, AppState> {
       case PACKET_LOBBY:
         this.setState({
           usernames: message[PARAM_USERNAMES],
-          icons: message[PARAM_ICON],
+          avatars: message[PARAM_AVATARS] || {},
+          // The lobby may have disambiguated the name from the session, so take
+          // it from the packet rather than assuming they match.
+          name: message[PARAM_YOU] ?? this.state.name,
           page: PAGE.LOBBY,
         });
-        if (message[PARAM_ICON][this.state.name] === defaultPortrait) {
-          this.showChangeIconAlert();
-        }
-        this.updateChangeIconAlert();
         break;
 
       case PACKET_GAME_STATE:
@@ -867,8 +1002,14 @@ class App extends Component<{}, AppState> {
         if (message !== this.state.gameState) {
           this.onGameStateChanged(message);
         }
-        this.setState({ gameState: message, page: PAGE.GAME }, () =>
-          this.reconcileActionPrompt()
+        this.setState(
+          {
+            gameState: message,
+            avatars: message[PARAM_AVATARS] || {},
+            name: message[PARAM_YOU] ?? this.state.name,
+            page: PAGE.GAME,
+          },
+          () => this.reconcileActionPrompt()
         );
         break;
 
@@ -933,7 +1074,6 @@ class App extends Component<{}, AppState> {
     const requestId = this.nextRequestId++;
     const data: WSCommand = {
       ...request,
-      name: this.state.name,
       lobby: this.state.lobby,
       [PARAM_REQUEST_ID]: requestId,
     };
@@ -954,7 +1094,7 @@ class App extends Component<{}, AppState> {
       // The socket died between the readyState check and the send.
       console.error("Failed to send a command to the server.", e);
       this.showSnackBar("Not connected to the server: reconnecting...");
-      this.tryOpenWebSocket(this.connectionName, this.connectionLobby);
+      this.tryOpenWebSocket(this.connectionLobby);
       return;
     }
 
@@ -1002,153 +1142,81 @@ class App extends Component<{}, AppState> {
   // <editor-fold desc="Login Page">
 
   /**
-   * Updates the "Name" field under Join Game.
-   * @param text the text to update the text field to.
-   */
-  updateJoinName = (text: string) => {
-    this.setState({
-      joinName: text,
-    });
-  };
-
-  /**
    * Updates the Lobby field under Join Game.
    * @param text the text to update the text field to.
    */
-  updateJoinLobby = (text: string) => {
+  updateJoinLobby(text: string) {
     this.setState({
       joinLobby: text,
     });
-  };
+  }
 
   /**
-   * Updates the Name field under Create Lobby.
-   * @param text the text to update the text field to.
+   * Joins a lobby by code.
+   *
+   * @param code the lobby to join.
+   * @effects checks with the server first, so a refusal can be explained on the
+   *          page rather than arriving as a closed websocket.
    */
-  updateCreateLobbyName = (text: string) => {
+  joinLobby(code: string) {
+    if (!code || code.length !== LOBBY_CODE_LENGTH) {
+      this.setState({ joinError: "Enter a four letter lobby code." });
+      return;
+    }
     this.setState({
-      createLobbyName: text,
+      joinError: "Connecting...",
+      createLobbyError: "",
+      joinLobby: code,
     });
-  };
+    ReactGA.event({
+      category: "Login Attempt",
+      action: "User attempted to join a lobby.",
+    });
 
-  shouldJoinButtonBeEnabled() {
-    return (
-      this.state.joinLobby.length === LOBBY_CODE_LENGTH &&
-      this.state.joinName.length !== 0
-    );
-  }
-
-  shouldCreateLobbyButtonBeEnabled() {
-    return this.state.createLobbyName.length !== 0;
-  }
-
-  /**
-   * Attempts to connect to the lobby via websocket.
-   */
-  onClickJoin = () => {
-    const joinName = this.state.joinName;
-    const joinLobby = this.state.joinLobby;
-    this.setState({ joinError: "Connecting...", createLobbyError: "" });
-    this.tryLogin(joinName, joinLobby)
+    checkLogin(code)
       .then((response) => {
         if (!response.ok) {
-          if (DEBUG) {
-            console.log("Response is not ok");
-          }
           if (response.status === 404) {
             this.setState({ joinError: "The lobby could not be found." });
-            ReactGA.event({
-              category: "Login Failed",
-              action: "Lobby not found - User unable to connect.",
-            });
-          } else if (response.status === 403) {
-            this.setState({
-              joinError:
-                "There is already a user with the name '" +
-                joinName +
-                "' in the lobby.",
-            });
-            ReactGA.event({
-              category: "Login Failed",
-              action: "Duplicate name - User unable to connect.",
-            });
           } else if (response.status === 488) {
             this.setState({ joinError: "The lobby is currently in a game." });
-            ReactGA.event({
-              category: "Login Failed",
-              action: "Ongoing game - User unable to connect.",
-            });
           } else if (response.status === 489) {
             this.setState({ joinError: "The lobby is currently full." });
-            ReactGA.event({
-              category: "Login Failed",
-              action: "Lobby full - User unable to connect.",
-            });
           } else {
             this.setState({
               joinError:
                 "There was an error connecting to the server. Please try again.",
             });
-            ReactGA.event({
-              category: "Login Failed",
-              action: "Misc - User was unable to connect.",
-            });
           }
-        } else {
-          // Username and lobby were verified. Try to open websocket.
-          if (!this.tryOpenWebSocket(joinName, joinLobby)) {
-            this.setState({
-              joinError:
-                "There was an error connecting to the server. Please try again.",
-            });
-          } else {
-            // Save the username and lobby login. Read from the local values
-            // rather than state, which tryOpenWebSocket has just replaced.
-            Cookies.set(COOKIE_NAME, joinName, { expires: 7 });
-            Cookies.set(COOKIE_LOBBY, joinLobby, { expires: 7 });
-          }
+          return;
+        }
+        if (!this.tryOpenWebSocket(code)) {
+          this.setState({
+            joinError:
+              "There was an error connecting to the server. Please try again.",
+          });
         }
       })
-      .catch(() => {
+      .catch((e) => {
+        if (e instanceof SessionExpiredError) {
+          this.handleSessionExpired();
+          return;
+        }
         this.setState({
           joinError:
             "There was an error contacting the server. Please wait and try again.",
         });
       });
-  };
+  }
 
   /**
-   * Attempts to connect to the server and create a new lobby, and then opens a connection to the lobby.
+   * Creates a new lobby and connects to it.
    */
-  onClickCreateLobby = () => {
-    const createLobbyName = this.state.createLobbyName;
+  onClickCreateLobby() {
     this.setState({ createLobbyError: "Connecting...", joinError: "" });
-    this.tryCreateLobby()
-      .then((response) => {
-        if (response.ok) {
-          response.text().then((lobbyCode) => {
-            if (!this.tryOpenWebSocket(createLobbyName, lobbyCode)) {
-              // if the connection failed
-              this.setState({
-                createLobbyError:
-                  "There was an error connecting to the server. Please try again.",
-              });
-              ReactGA.event({
-                category: "Lobby Creation Failed",
-                action: "Failed to create a new lobby.",
-              });
-            } else {
-              ReactGA.event({
-                category: "Lobby Created",
-                action: "Successfully created new lobby.",
-              });
-              // Save the username and lobby login. Read from the local value
-              // rather than state, which tryOpenWebSocket has just replaced.
-              Cookies.set(COOKIE_NAME, createLobbyName, { expires: 7 });
-              Cookies.set(COOKIE_LOBBY, lobbyCode, { expires: 7 });
-            }
-          });
-        } else {
+    createLobby()
+      .then((lobbyCode) => {
+        if (!this.tryOpenWebSocket(lobbyCode)) {
           this.setState({
             createLobbyError:
               "There was an error connecting to the server. Please try again.",
@@ -1157,9 +1225,18 @@ class App extends Component<{}, AppState> {
             category: "Lobby Creation Failed",
             action: "Failed to create a new lobby.",
           });
+          return;
         }
+        ReactGA.event({
+          category: "Lobby Created",
+          action: "Successfully created new lobby.",
+        });
       })
-      .catch(() => {
+      .catch((e) => {
+        if (e instanceof SessionExpiredError) {
+          this.handleSessionExpired();
+          return;
+        }
         this.setState({
           createLobbyError:
             "There was an error connecting to the server. Please try again.",
@@ -1169,67 +1246,49 @@ class App extends Component<{}, AppState> {
           action: "Failed to create a new lobby.",
         });
       });
-  };
+  }
 
+  /**
+   * Renders whichever of the three pre-game screens applies: waiting to find out
+   * who the player is, asking them to sign in, or the signed-in home screen.
+   */
   renderLoginPage() {
+    if (this.state.authStatus === "checking") {
+      return (
+        <div className="App">
+          <header className="App-header">Secret Hitler</header>
+          {this.state.showSlowSignIn && (
+            <p id={"lobby-vip-text"}>Signing you in&hellip;</p>
+          )}
+        </div>
+      );
+    }
+
+    if (this.state.authStatus === "signed-out" || this.state.session === undefined) {
+      return (
+        <SignInPage
+          authError={this.state.authError}
+          unreachable={this.state.authUnreachable}
+          pendingLobby={this.state.pendingLobby}
+          onRetry={this.loadSession}
+        />
+      );
+    }
+
     return (
-      <div className="App">
-        <header className="App-header">Secret Hitler</header>
-        <br />
-        <div style={{ textAlign: "center" }}>
-          {/** TODO: Add reusable announcement component. 
-                    <div style={{backgroundColor: "#222222", width: "50vmin", margin: "0 auto", padding: "20px"}}>
-                        <p>
-                            Hello! Secret Hitler is currently undergoing some maintenance.
-                            Sorry for the interruption and please check back in in a few hours! -Shrimp
-                        </p>
-                        <p style={{fontStyle: "italic", fontSize: "calc(8px + 1vmin)"}}>(DATE TIME PM PT)</p>
-
-                    </div>
-                    */}
-          <h2>JOIN A GAME</h2>
-          <MaxLengthTextField
-            label={"Lobby"}
-            onChange={this.updateJoinLobby}
-            value={this.state.joinLobby}
-            maxLength={LOBBY_CODE_LENGTH}
-            showCharCount={false}
-            forceUpperCase={true}
-          />
-
-          <MaxLengthTextField
-            label={"Your Name"}
-            onChange={this.updateJoinName}
-            value={this.state.joinName}
-            maxLength={12}
-          />
-          <p id={"errormessage"}>{this.state.joinError}</p>
-          <button
-            onClick={this.onClickJoin}
-            disabled={!this.shouldJoinButtonBeEnabled()}
-          >
-            JOIN
-          </button>
-        </div>
-        <br />
-        <div>
-          <h2>CREATE A LOBBY</h2>
-          <MaxLengthTextField
-            label={"Your Name"}
-            onChange={this.updateCreateLobbyName}
-            value={this.state.createLobbyName}
-            maxLength={12}
-          />
-          <p id={"errormessage"}>{this.state.createLobbyError}</p>
-          <button
-            onClick={this.onClickCreateLobby}
-            disabled={!this.shouldCreateLobbyButtonBeEnabled()}
-          >
-            CREATE LOBBY
-          </button>
-        </div>
-        <LoginPageContent />
-      </div>
+      <HomePage
+        session={this.state.session}
+        lobbyCode={this.state.joinLobby}
+        onLobbyCodeChange={this.updateJoinLobby}
+        onJoin={this.joinLobby}
+        onCreate={this.onClickCreateLobby}
+        onSignOut={this.onClickSignOut}
+        onSessionExpired={this.handleSessionExpired}
+        joinError={this.state.joinError}
+        createError={this.state.createLobbyError}
+        busy={this.state.joinError === "Connecting..." ||
+          this.state.createLobbyError === "Connecting..."}
+      />
     );
   }
 
@@ -1249,17 +1308,13 @@ class App extends Component<{}, AppState> {
           key={i}
           name={i === 0 ? name + " [Host]" : name}
           showRole={false}
-          icon={this.state.icons[name]}
-          isBusy={this.state.icons[name] === defaultPortrait}
+          avatarUrl={this.state.avatars[name]}
           highlight={name === this.state.name}
         />
       );
     });
   }
 
-  onClickChangeIcon() {
-    this.showChangeIconAlert();
-  }
 
   /**
    * Toggles whether role information is concealed on this device, and persists
@@ -1268,7 +1323,10 @@ class App extends Component<{}, AppState> {
   onClickToggleHideRole() {
     const hideRole = !this.state.hideRole;
     this.setState({ hideRole, peekingRole: false });
-    Cookies.set(COOKIE_HIDE_ROLE, String(hideRole), { expires: 7 });
+    Cookies.set(COOKIE_HIDE_ROLE, String(hideRole), {
+      expires: 7,
+      sameSite: "lax",
+    });
   }
 
   /**
@@ -1279,27 +1337,7 @@ class App extends Component<{}, AppState> {
     this.setState({ peekingRole });
   }
 
-  updateChangeIconAlert() {
-    this.setState({
-      alertContent: (
-        <IconSelection
-          onConfirm={() => {
-            this.clearAnimationQueue();
-            this.hideAlertAndFinish();
-          }}
-          sendWSCommand={this.sendWSCommand}
-          playerToIcon={this.state.icons}
-          players={this.state.usernames}
-          user={this.state.name}
-        />
-      ),
-    });
-  }
 
-  showChangeIconAlert() {
-    this.queueAlert(<div />, false); // false here prevents dialog from closing when server confirms selection
-    this.updateChangeIconAlert();
-  }
 
   /**
    * Determines whether the 'Start Game' button in the lobby should be enabled.
@@ -1307,12 +1345,6 @@ class App extends Component<{}, AppState> {
    * players before it can begin.
    */
   shouldStartGameBeEnabled() {
-    // Verify that all players have icons
-    for (let i = 0; i < this.state.usernames.length; i++) {
-      if (this.state.icons[this.state.usernames[i]] === defaultPortrait) {
-        return false;
-      }
-    }
     return this.state.usernames.length >= MIN_PLAYERS;
   }
 
@@ -1419,12 +1451,6 @@ class App extends Component<{}, AppState> {
                 <p id={"lobby-player-count-text"}>
                   Players ({this.state.usernames.length}/{MAX_PLAYERS})
                 </p>
-                <button
-                  id={"lobby-change-icon-button"}
-                  onClick={this.onClickChangeIcon}
-                >
-                  CHANGE ICON
-                </button>
               </div>
               <div id={"lobby-player-container"}>{this.renderPlayerList()}</div>
             </div>
@@ -2038,7 +2064,7 @@ class App extends Component<{}, AppState> {
                     this.reconnectOnConnectionClosed = true;
                     this.reconnectAttempts = 0;
                     this.firstFailureTime = 0;
-                    this.tryOpenWebSocket(this.state.name, this.state.lobby);
+                    this.tryOpenWebSocket(this.state.lobby);
                     this.hideAlertAndFinish();
                     this.setState({
                       page: PAGE.LOBBY,
@@ -2369,20 +2395,6 @@ class App extends Component<{}, AppState> {
   //</editor-fold>
 
   render() {
-    // Check URL params. If joining from a lobby link, open the lobby with the given code.
-    let url = window.location.search;
-    let lobby = new URLSearchParams(url).get("lobby");
-    if (lobby !== null && !this.state.lobbyFromURL) {
-      ReactGA.event({
-        category: "Lobby Link",
-        action: "User is using a lobby link.",
-      });
-      this.setState({
-        joinLobby: lobby.toUpperCase().substr(0, 4),
-        lobbyFromURL: true,
-      });
-    }
-
     let page_render;
     switch (this.state.page) {
       case PAGE.LOBBY:

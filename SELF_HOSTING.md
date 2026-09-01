@@ -12,9 +12,14 @@ under one hostname.
                   web (nginx) :8080
                     ├── /                        static frontend
                     ├── /game                    websocket ─┐
-                    ├── /ping                               ├─► backend :8080
-                    ├── /new-lobby                          │
-                    └── /check-login             ───────────┘
+                    ├── /ping                               │
+                    ├── /new-lobby                          ├─► backend :8080
+                    ├── /check-login                        │
+                    ├── /open-lobbies                       │
+                    └── /auth/*                  ───────────┘
+                                                       │
+                                                       ▼
+                                                   db :5432
                                                        │
                                                        ▼
                                                    db :5432
@@ -25,10 +30,33 @@ compose network, so the proxy is the only way in.
 
 ## Setup
 
+### 1. Create a Slack app
+
+Signing in with Slack is the only way to play, so this comes first.
+
+1. Create an app at [api.slack.com/apps](https://api.slack.com/apps).
+2. Under **OAuth & Permissions**, add a Redirect URL of
+   `https://insertyourdomainhere.com/auth/slack/callback`. It must be https;
+   Slack refuses to redirect anywhere else, which is also why there is no way to
+   complete a real sign-in against `localhost`.
+3. Under **User Token Scopes**, add `openid`, `profile` and `email`. These are the
+   Sign in with Slack scopes and cannot be combined with any others in one app.
+4. Install the app to your workspace, and copy the **Client ID** and
+   **Client Secret** from **Basic Information**.
+5. Note your workspace's team id — the `T...` value in the URL when you open Slack
+   in a browser.
+
+### 2. Configure and start
+
 ```bash
-cp .env.example .env      # set PUBLIC_ORIGIN and POSTGRES_PASSWORD
+cp .env.example .env      # set PUBLIC_ORIGIN, POSTGRES_PASSWORD and the SLACK_* values
 docker compose -f docker-compose.prod.yml up -d --build
 ```
+
+The backend refuses to start if the Slack settings are missing or if
+`PUBLIC_ORIGIN` is not https, rather than coming up and turning every player
+away. Check `docker compose -f docker-compose.prod.yml logs backend` if it exits
+immediately.
 
 Then check the stack directly, before involving the proxy:
 
@@ -144,7 +172,20 @@ So one image serves any hostname, upgrades to `wss://` on its own, and needs no
 rebuild if the domain changes. Requests are same-origin, so CORS never applies.
 
 `PUBLIC_ORIGIN` still sets the backend's `ALLOWED_ORIGINS`, which only matters if
-something reaches the backend cross-origin.
+something reaches the backend cross-origin. It now also builds the address Slack
+returns players to, and decides whether the session cookie is marked `Secure` --
+which is why it is taken from configuration rather than from the request headers,
+where a client could set it.
+
+## Signing in
+
+Players sign in with Slack and stay signed in for 30 days
+(`SESSION_TTL_HOURS`). Only members of the workspace named by `SLACK_TEAM_ID` are
+allowed in; anyone else is sent back with an explanation.
+
+Sessions live in the `user_session` table, not in the lobby backup, so they
+survive a restart and can be expired or revoked. Only a hash of each session
+token is stored, so a database dump cannot be replayed as a live sign-in.
 
 ## Updating
 

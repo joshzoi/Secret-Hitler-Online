@@ -15,7 +15,7 @@ import IconBusy from "../assets/player-icon-busy.png";
 
 import YesVote from "../assets/player-icon-ja.png";
 import NoVote from "../assets/player-icon-nein.png";
-import portraits, {portraitsAltText} from "../assets";
+import PlayerAvatar from "./PlayerAvatar";
 import {RoleVisibilityContext} from "../util/RoleVisibilityContext";
 
 const LIBERAL = "LIBERAL";
@@ -193,9 +193,8 @@ class Player extends Component {
                      className={this.getClassName()}
                 />
 
-                <img id={"player-icon"}
-                     alt={portraitsAltText[this.props.icon]}
-                     src={portraits[this.props.icon]}
+                <PlayerAvatar id={"player-icon"}
+                     src={this.props.avatarUrl}
                      className={this.getClassName()}
                 />
 
@@ -250,7 +249,6 @@ Player.defaultProps = {
     highlight: false,
     showVote: false,
     vote: false,
-    icon: "p_default",
 };
 
 Player.propTypes = {
@@ -267,7 +265,7 @@ Player.propTypes = {
     highlight: PropTypes.bool,
     showVote: PropTypes.bool,
     vote: PropTypes.bool,
-    icon: PropTypes.string,
+    avatarUrl: PropTypes.string,
 };
 
 export default Player;

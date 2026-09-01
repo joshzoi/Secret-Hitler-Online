@@ -117,7 +117,7 @@ class VotingPrompt extends Component<VotingPromptProps, VotingPromptState> {
                 roleHidden={roleHidden}
                 role={chancellorRole}
                 style={{ marginRight: "10px" }}
-                icon={this.props.gameState.icon[chancellorName]}
+                avatarUrl={this.props.gameState.avatars[chancellorName]}
               />
 
               <p className="left-align">

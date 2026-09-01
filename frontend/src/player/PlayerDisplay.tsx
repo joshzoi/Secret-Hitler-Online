@@ -333,7 +333,7 @@ export default function PlayerDisplay(
               onClick={onClick}
               showVote={showVote}
               vote={props.gameState.userVotes[playerName]}
-              icon={props.gameState.icon[playerName]}
+              avatarUrl={props.gameState.avatars[playerName]}
             />
           </div>
         );

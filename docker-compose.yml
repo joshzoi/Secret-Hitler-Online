@@ -41,6 +41,10 @@ services:
     environment:
       HOST: 0.0.0.0
       CHOKIDAR_USEPOLLING: "true"
+      # The dev server proxies the backend so everything is one origin, which is
+      # what lets the session cookie reach the websocket. It runs in here, so it
+      # reaches the backend by service name rather than on localhost.
+      BACKEND_ORIGIN: http://backend:4040
     command: bash -lc "npm install && npm run devLocal"
     depends_on:
       - backend

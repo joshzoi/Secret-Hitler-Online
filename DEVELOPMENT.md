@@ -17,6 +17,28 @@ behind your own reverse proxy — see [SELF_HOSTING.md](SELF_HOSTING.md).
 
 Your setup will vary depending on if you're only making changes to the frontend, or if you're making changes to the frontend and the backend at once.
 
+## Signing in during development
+
+Signing in is the only way to play, and Slack will not redirect back to a
+`localhost` address, so the server offers `/auth/dev-login` instead. It exists
+only when `DEBUG_MODE` is set, and signs you in as whoever you ask for:
+
+```
+http://localhost:3000/auth/dev-login?name=Joshua%20Favetti
+```
+
+Open that in a browser and you are signed in for the rest of the session. Add
+`&avatar=<url>` to check how a profile picture renders.
+
+One browser is one player now, so testing with several people means several
+browser profiles or private windows rather than several tabs -- a second tab
+takes the seat over from the first, exactly as it would if you opened the game on
+your phone.
+
+If you want to exercise a real Slack round trip, put an HTTPS tunnel in front of
+the dev server (`cloudflared tunnel --url http://localhost:3000`), add its address
+as a Redirect URL on your Slack app, and set `PUBLIC_ORIGIN` to it.
+
 ## Playing a test game
 
 A game needs five players and the server has no bots, so trying a real game by
@@ -25,7 +47,9 @@ placeholder joins over a websocket like any other client and plays the first
 legal move it is offered. It does not try to play well -- it is there so the game
 keeps moving.
 
-Create a lobby in the browser, then, in a second terminal:
+Each placeholder signs itself in through `/auth/dev-login`, so this only works
+against a development server. Create a lobby in the browser, then, in a second
+terminal:
 
 ```bash
 cd frontend
@@ -41,21 +65,16 @@ anything else.
 
 ## Frontend Only
 
-Follow these instructions if you are only making changes to the frontend. These instructions will allow you to connect to the development server rather than needing to run the instance locally.
+There used to be a `devServer` script that pointed a local frontend at the shared
+development backend. That cannot work now: the session lives in a cookie, and a
+cookie set by one host is not sent to another. Signing in is the only way to play,
+so a frontend without a backend it shares an origin with cannot get past the
+sign-in screen.
 
-### Running frontend server
-
-Open a terminal window and run the following commands to clone the project and set up the frontend dependencies:
-
-```bash
-git clone git@github.com:joshzoi/Secret-Hitler-Online.git
-cd Secret-Hitler-Online/frontend
-
-npm install
-npm run devServer
-```
-
-The webpage should open automatically in your browser, but is usually hosted at [localhost:3000](http://localhost:3000).
+Run the backend locally instead, as below. The dev server proxies it
+(`frontend/src/setupProxy.js`), so everything is served from
+[localhost:3000](http://localhost:3000) and the app exercises the same
+single-origin path it uses in production.
 
 ## Changing frontend + backend
 

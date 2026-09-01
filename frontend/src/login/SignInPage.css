@@ -1,0 +1,50 @@
+/* App.css styles every button as a heavy orange game button, including a 5px
+   downward nudge on :active. The Slack button has to follow Slack's guidance
+   instead, so it opts out of all of that explicitly. */
+.slack-signin-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  height: 48px;
+  padding: 0 16px;
+  margin: 18px auto;
+  background-color: #ffffff;
+  border: 1px solid #dddddd;
+  border-radius: 4px;
+  box-shadow: none;
+  color: rgba(0, 0, 0, 0.85);
+  font-family: var(--textFont);
+  font-size: 16px;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  top: 0;
+}
+
+.slack-signin-button:hover,
+.slack-signin-button:focus-visible {
+  background-color: #f8f8f8;
+}
+
+/* Neutralise App.css's press animation, which would shove the button downwards. */
+.slack-signin-button:active {
+  top: 0;
+  box-shadow: none;
+}
+
+.slack-signin-mark {
+  width: 20px;
+  height: 20px;
+  /* Slack asks that the mark keeps clear space around it and is never redrawn. */
+  flex-shrink: 0;
+}
+
+#signin-explainer {
+  max-width: 60vmin;
+  margin: 0 auto;
+}
+
+#signin-invite {
+  font-style: italic;
+}

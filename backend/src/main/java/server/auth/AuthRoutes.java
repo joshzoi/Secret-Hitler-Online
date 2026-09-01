@@ -187,10 +187,15 @@ public class AuthRoutes {
         }
 
         String team = ApplicationConfig.slackTeamId();
-        // No avatar on purpose: this exercises the same fallback a real Slack user
-        // with no profile photo gets, and it keeps development working offline.
+        // No avatar unless one is asked for, so the default exercises the same
+        // fallback a real Slack user with no profile photo gets, and development
+        // keeps working offline. Pass ?avatar=<url> to check how a photo renders.
+        String avatar = ctx.queryParam("avatar");
+        if (avatar != null && avatar.trim().isEmpty()) {
+            avatar = null;
+        }
         SlackProfile profile = new SlackProfile(id.trim(), team == null ? "T_DEV" : team,
-                name, given, family, null);
+                name, given, family, avatar);
 
         UserSession session = issueSession(ctx, profile);
         logger.warn("DEV LOGIN issued for '" + name + "' (" + id + ").");

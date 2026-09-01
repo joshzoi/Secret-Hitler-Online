@@ -6,11 +6,12 @@ import {
   PACKET_GAME_STATE,
   PACKET_LOBBY,
   PACKET_OK,
-  PARAM_ICON,
+  PARAM_AVATARS,
   PARAM_MESSAGE,
   PARAM_PACKET_TYPE,
   PARAM_REQUEST_ID,
   PARAM_USERNAMES,
+  PARAM_YOU,
 } from "./constants";
 import {
   GameState,
@@ -73,6 +74,11 @@ class FakeWebSocket {
 }
 
 const PLAYERS = ["Alice", "Bob", "Carol", "Dave", "Erin"];
+
+/** Slack hosts avatars on its own CDN, so these are absolute URLs. */
+function avatarFor(player: string) {
+  return "https://avatars.slack-edge.com/" + player + "_192.png";
+}
 const ME = "Alice";
 /* Long enough for the event bar and status message queued alongside a prompt to
    play out, but short of the four seconds after which the client gives up on
@@ -85,10 +91,10 @@ const ANIMATION_TIME = 3000;
  */
 function votingState(overrides: Partial<GameState> = {}): GameState {
   const players: Record<string, PlayerState> = {};
-  const icon: Record<string, string> = {};
+  const avatars: Record<string, string> = {};
   PLAYERS.forEach((player) => {
     players[player] = { alive: true, investigated: false };
-    icon[player] = "p_default";
+    avatars[player] = avatarFor(player);
   });
   players[ME].id = Role.LIBERAL; // the server only sends the player their own role
 
@@ -110,7 +116,7 @@ function votingState(overrides: Partial<GameState> = {}): GameState {
     discardSize: 0,
     lastPolicy: "FASCIST",
     vetoOccurred: false,
-    icon,
+    avatars,
     ...overrides,
   };
 }
@@ -118,6 +124,7 @@ function votingState(overrides: Partial<GameState> = {}): GameState {
 function gameStatePacket(overrides: Partial<GameState> = {}) {
   return {
     [PARAM_PACKET_TYPE]: PACKET_GAME_STATE,
+    [PARAM_YOU]: ME,
     ...votingState(overrides),
   };
 }
@@ -136,15 +143,19 @@ function runAnimations(ms = ANIMATION_TIME) {
   });
 }
 
-/** Renders the app and connects it to a lobby as Alice. */
+/** Renders the app, signs in as Alice, and connects to a lobby. */
 async function joinLobby() {
   render(<App />);
+  // Settle the sign-in check, which now runs before anything else is shown.
+  await act(async () => {
+    await Promise.resolve();
+  });
+
   const fields = screen.getAllByRole("textbox");
   fireEvent.change(fields[0], { target: { value: "ABCD" } }); // lobby code
-  fireEvent.change(fields[1], { target: { value: ME } });
 
   await act(async () => {
-    fireEvent.click(screen.getByRole("button", { name: "JOIN" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "JOIN" })[0]);
   });
 
   const ws = FakeWebSocket.instances[FakeWebSocket.instances.length - 1];
@@ -170,8 +181,20 @@ beforeEach(() => {
   jest.useFakeTimers();
   FakeWebSocket.instances = [];
   (global as any).WebSocket = FakeWebSocket;
-  (global as any).fetch = jest.fn(() =>
-    Promise.resolve({ ok: true, text: () => Promise.resolve("ABCD") })
+  // Signed in as Alice, with every other call succeeding. Tests that care about a
+  // particular answer override this.
+  (global as any).fetch = jest.fn((url: string) =>
+    Promise.resolve({
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve("ABCD"),
+      json: () =>
+        Promise.resolve(
+          String(url).includes("/auth/me")
+            ? { signedIn: true, slackUserId: "U_ALICE", name: ME }
+            : { lobbies: [] }
+        ),
+    })
   );
 });
 
@@ -258,13 +281,13 @@ test("a player with nothing to do is not prompted", async () => {
  * client is the host and sees the start button at all.
  */
 function deliverLobby(ws: FakeWebSocket, players: string[]) {
-  const icon: Record<string, string> = {};
-  // Anything but the default, so the icon picker does not open over the lobby.
-  players.forEach((player, i) => (icon[player] = "p" + (i + 1)));
+  const avatars: Record<string, string> = {};
+  players.forEach((player) => (avatars[player] = avatarFor(player)));
   ws.deliver({
     [PARAM_PACKET_TYPE]: PACKET_LOBBY,
     [PARAM_USERNAMES]: players,
-    [PARAM_ICON]: icon,
+    [PARAM_AVATARS]: avatars,
+    [PARAM_YOU]: ME,
   });
 }
 

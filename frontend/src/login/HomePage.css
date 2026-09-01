@@ -1,0 +1,38 @@
+#home-session {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin: 10px auto;
+  font-family: var(--textFont);
+  font-size: calc(6px + 1vmin);
+  flex-wrap: wrap;
+}
+
+#home-session-avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  object-fit: cover;
+  background-color: var(--backgroundDark);
+}
+
+/* A plain text action: signing out should not look as inviting as joining. */
+#home-signout {
+  background: none;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  margin: 0;
+  font-family: var(--textFont);
+  font-size: calc(6px + 1vmin);
+  color: var(--textColorHighlight);
+  text-decoration: underline;
+  cursor: pointer;
+  top: 0;
+}
+
+#home-signout:active {
+  top: 0;
+  box-shadow: none;
+}

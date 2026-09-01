@@ -47,6 +47,13 @@ services:
       # Only consulted for cross-origin requests. `web` serves the frontend from
       # the same origin, so this matters only if the backend is reached directly.
       ALLOWED_ORIGINS: ${PUBLIC_ORIGIN:?set PUBLIC_ORIGIN in .env, e.g. https://insertyourdomainhere.com}
+      # Also passed as itself: it builds the address Slack returns players to, and
+      # decides whether the session cookie is marked Secure.
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN}
+      SLACK_CLIENT_ID: ${SLACK_CLIENT_ID:?set SLACK_CLIENT_ID in .env}
+      SLACK_CLIENT_SECRET: ${SLACK_CLIENT_SECRET:?set SLACK_CLIENT_SECRET in .env}
+      SLACK_TEAM_ID: ${SLACK_TEAM_ID:?set SLACK_TEAM_ID in .env}
+      SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-720}
     depends_on:
       db:
         condition: service_healthy

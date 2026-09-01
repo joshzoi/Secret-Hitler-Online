@@ -12,6 +12,9 @@
  * server has no notion of a player it controls, and giving it one would put the
  * machinery for fake players back into Lobby for the sake of development.
  *
+ * Each one signs in through /auth/dev-login, which the server only offers when
+ * DEBUG_MODE is set, so this cannot be pointed at a real deployment.
+ *
  * Start the lobby in a browser, then:
  *
  *     cd frontend
@@ -22,23 +25,57 @@
  * Press START GAME in the browser once they have joined. Ctrl-C makes them leave.
  */
 
-/* Node 21 and later have a WebSocket client built in; before that, fall back to
-   the `ws` package, which the frontend depends on for this script. */
-const WebSocketImpl =
-  typeof WebSocket !== "undefined" ? WebSocket : require("ws");
+const http = require("http");
+const https = require("https");
+
+/* The `ws` package rather than Node's built-in WebSocket: the session arrives in
+   a cookie, and only this one lets a handshake carry headers. */
+const WebSocketImpl = require("ws");
 
 /* 127.0.0.1 rather than localhost: the backend binds IPv4, and localhost
    resolves to ::1 first in some environments, which just refuses. */
 const DEFAULT_SERVER = "ws://127.0.0.1:4040";
 const DEFAULT_COUNT = 4;
-const DEFAULT_ICON = "p_default";
-/* Icons cannot be shared, so each placeholder claims one nobody else holds. */
-const ICONS = Array.from({ length: 20 }, (_, i) => "p" + (i + 1));
 /* Long enough to watch what is happening, short enough not to be tedious. */
 const ACTION_DELAY_MS = 400;
 /* Staggered joins keep the lobby order stable and avoid a scramble for icons. */
 const JOIN_STAGGER_MS = 250;
 const PING_INTERVAL_MS = 25000;
+
+/** The http origin matching the websocket address, for signing in. */
+function httpOrigin(wsServer) {
+  return wsServer.replace(/^ws/, "http");
+}
+
+/**
+ * Signs a placeholder in and returns the cookie the server hands back.
+ *
+ * Uses the development-only sign-in route, so no Slack round trip is needed --
+ * which is just as well, since Slack will not redirect to a localhost address.
+ */
+function devLogin(origin, name) {
+  return new Promise((resolve, reject) => {
+    const url = new URL(origin + "/auth/dev-login?name=" + encodeURIComponent(name));
+    const client = url.protocol === "https:" ? https : http;
+    const request = client.request(url, { method: "GET" }, (response) => {
+      response.resume(); // discard the body; we only want the cookie
+      const cookies = response.headers["set-cookie"];
+      if (response.statusCode !== 200 || !cookies) {
+        reject(
+          new Error(
+            "dev-login failed with status " + response.statusCode +
+              ". Is the server running with DEBUG_MODE set?"
+          )
+        );
+        return;
+      }
+      // Just the name=value part; the attributes are for a browser to act on.
+      resolve(cookies.map((cookie) => cookie.split(";")[0]).join("; "));
+    });
+    request.on("error", reject);
+    request.end();
+  });
+}
 
 function usage(message) {
   if (message) console.error("fill-lobby: " + message + "\n");
@@ -166,22 +203,21 @@ function positionKey(state) {
   ].join("|");
 }
 
-function connect(name, index) {
-  const clientId = "fill-lobby-" + process.pid + "-" + index;
-  const url =
-    server +
-    "/game?name=" + encodeURIComponent(name) +
-    "&lobby=" + encodeURIComponent(lobby) +
-    "&client-id=" + encodeURIComponent(clientId);
+function connect(requestedName, cookie) {
+  // Only the lobby: the server takes who we are from the session in the cookie.
+  const url = server + "/game?lobby=" + encodeURIComponent(lobby);
 
-  const socket = new WebSocketImpl(url);
+  const socket = new WebSocketImpl(url, { headers: { Cookie: cookie } });
   let requestId = 0;
   let actedOn = null;
   let pingTimer;
+  /* What this lobby decided to call us. The server picks names, and disambiguates
+     them, so it need not be the one we asked to sign in as. */
+  let name = requestedName;
 
   function send(payload) {
     socket.send(
-      JSON.stringify(Object.assign({ name, lobby, "request-id": requestId++ }, payload))
+      JSON.stringify(Object.assign({ lobby, "request-id": requestId++ }, payload))
     );
   }
 
@@ -194,17 +230,16 @@ function connect(name, index) {
     const packet = JSON.parse(String(event.data));
     switch (packet.type) {
       case "lobby": {
-        const icons = packet.icon || {};
-        if (icons[name] === undefined || icons[name] === DEFAULT_ICON) {
-          const taken = new Set(Object.values(icons));
-          const free = ICONS.find((icon) => !taken.has(icon));
-          // Another placeholder may claim it first, in which case the server
-          // ignores this and the next lobby packet prompts another try.
-          if (free) send({ command: "select-icon", icon: free });
+        if (packet.you && packet.you !== name) {
+          console.log(requestedName + ": joined as " + packet.you);
+          name = packet.you;
         }
         break;
       }
       case "game": {
+        if (packet.you) {
+          name = packet.you;
+        }
         const key = positionKey(packet);
         if (key === actedOn) return;
         const action = decideAction(packet, name);
@@ -239,15 +274,28 @@ function connect(name, index) {
 }
 
 const players = [];
-for (let i = 0; i < count; i++) {
-  const name = "Test " + (i + 1);
-  setTimeout(() => players.push(connect(name, i)), i * JOIN_STAGGER_MS);
+
+async function start() {
+  console.log(
+    "Filling " + lobby + " with " + count + " placeholder player" +
+      (count === 1 ? "" : "s") + " via " + server + ". Ctrl-C to remove them."
+  );
+  const origin = httpOrigin(server);
+  for (let i = 0; i < count; i++) {
+    const name = "Test " + (i + 1);
+    try {
+      const cookie = await devLogin(origin, name);
+      players.push(connect(name, cookie));
+    } catch (e) {
+      console.error(name + ": could not sign in -- " + e.message);
+      process.exit(1);
+    }
+    // Staggered so the lobby fills in a predictable order.
+    await new Promise((resolve) => setTimeout(resolve, JOIN_STAGGER_MS));
+  }
 }
 
-console.log(
-  "Filling " + lobby + " with " + count + " placeholder player" +
-    (count === 1 ? "" : "s") + " via " + server + ". Ctrl-C to remove them."
-);
+start();
 
 process.on("SIGINT", () => {
   // Leave properly, so the seats are freed rather than held open for a reconnect

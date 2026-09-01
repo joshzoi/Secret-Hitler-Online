@@ -69,6 +69,11 @@ public class UserSession {
         return expiresAt;
     }
 
+    /** The Slack profile this session was built from, for deriving a name. */
+    public SlackProfile getProfile() {
+        return new SlackProfile(slackUserId, slackTeamId, displayName, givenName, familyName, avatarUrl);
+    }
+
     public boolean isExpired(long nowMillis) {
         return nowMillis >= expiresAt;
     }

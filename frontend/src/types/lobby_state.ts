@@ -53,6 +53,6 @@ export type GameState = {
   peek?: PolicyType[];
 
   usernames?: string[];
-  /** Maps from usernames to icon keys */
-  icon: Record<string, string>;
+  /** Maps each player's name to their Slack profile picture. */
+  avatars: Record<string, string>;
 };

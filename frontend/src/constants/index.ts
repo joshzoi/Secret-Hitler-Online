@@ -30,6 +30,10 @@ export const WEBSOCKET_HEADER = SAME_ORIGIN
 
 export const CHECK_LOGIN = "/check-login";
 export const NEW_LOBBY = "/new-lobby";
+export const OPEN_LOBBIES = "/open-lobbies";
+export const AUTH_ME = "/auth/me";
+export const AUTH_LOGIN = "/auth/slack/login";
+export const AUTH_LOGOUT = "/auth/logout";
 export const WEBSOCKET = "/game";
 export const SERVER_PING = "/ping";
 export const LOBBY_CODE_LENGTH = 4;
@@ -60,7 +64,6 @@ export const RECONNECT_GIVE_UP_AFTER = 90000;
    in the close reason. These mean reconnecting cannot succeed, so the player is
    told what happened instead of being left watching a spinner. */
 export const CLOSE_LOBBY_NOT_FOUND = "lobby-not-found";
-export const CLOSE_NAME_TAKEN = "name-taken";
 export const CLOSE_LOBBY_FULL = "lobby-full";
 export const CLOSE_GAME_IN_PROGRESS = "game-in-progress";
 export const CLOSE_LOBBY_TIMED_OUT = "lobby-timed-out";
@@ -68,6 +71,9 @@ export const CLOSE_BAD_REQUEST = "bad-request";
 /* This connection was superseded by a newer one from the same browser. Retrying
    would just have the two connections take turns evicting each other. */
 export const CLOSE_REPLACED = "replaced";
+/* The connection had no valid session behind it. Final: retrying cannot fix it,
+   and the player has to sign in again. */
+export const CLOSE_UNAUTHENTICATED = "unauthenticated";
 
 //////// Game Constants
 export const MIN_PLAYERS = 5;
@@ -93,15 +99,12 @@ export const PARAM_MESSAGE = "message";
 export const PARAM_COMMAND = "command";
 export const PARAM_NAME = "name";
 export const PARAM_LOBBY = "lobby";
-export const PARAM_ICON = "icon"; // id of the selected portrait.
-export const PARAM_CLIENT_ID = "client-id"; // identifies this browser to the server.
 export const PARAM_REQUEST_ID = "request-id"; // identifies a single command, echoed back in its 'ok'.
 export const PARAM_VOTE = "vote";
 export const PARAM_VETO = "veto"; // the veto decision (yes/no)
 export const PARAM_CHOICE = "choice"; // the index of the chosen policy.
 
 export const COMMAND_PING = "ping";
-export const COMMAND_SELECT_ICON = "select-icon";
 export const COMMAND_START_GAME = "start-game";
 export const COMMAND_GET_STATE = "get-state";
 export const COMMAND_NOMINATE_CHANCELLOR = "nominate-chancellor";
@@ -141,6 +144,11 @@ export const STATE_FASCIST_VICTORY_ELECTION = "FASCIST_VICTORY_ELECTION"; // Fas
 // Lobby
 export const PARAM_USER_COUNT = "user-count";
 export const PARAM_USERNAMES = "usernames";
+/* Maps each player name to their Slack profile picture. */
+export const PARAM_AVATARS = "avatars";
+/* Which player in the packet the recipient is. The server chooses names, so this
+   is how the client learns which one is its own. */
+export const PARAM_YOU = "you";
 
 // Peek
 export const PARAM_PEEK = "peek";
