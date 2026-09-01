@@ -32,19 +32,61 @@ compose network, so the proxy is the only way in.
 
 ### 1. Create a Slack app
 
-Signing in with Slack is the only way to play, so this comes first.
+Signing in with Slack is the only way to play, so this comes first. It takes a few
+minutes and needs no approval from Slack: review only applies to apps published to
+the App Directory, and this one is only ever installed in your own workspace. You
+are not writing or hosting anything — the app is a registration record so Slack
+knows which redirect address is legitimately yours.
 
-1. Create an app at [api.slack.com/apps](https://api.slack.com/apps).
-2. Under **OAuth & Permissions**, add a Redirect URL of
-   `https://insertyourdomainhere.com/auth/slack/callback`. It must be https;
-   Slack refuses to redirect anywhere else, which is also why there is no way to
-   complete a real sign-in against `localhost`.
-3. Under **User Token Scopes**, add `openid`, `profile` and `email`. These are the
-   Sign in with Slack scopes and cannot be combined with any others in one app.
-4. Install the app to your workspace, and copy the **Client ID** and
-   **Client Secret** from **Basic Information**.
-5. Note your workspace's team id — the `T...` value in the URL when you open Slack
-   in a browser.
+The one thing that can hold you up is your own workspace. Many restrict who may
+install apps, in which case an admin has to approve it.
+
+1. Go to [api.slack.com/apps](https://api.slack.com/apps) and choose
+   **Create New App → From scratch**. Name it whatever you like — players see this
+   name on the Slack consent screen — and pick the workspace to restrict the game
+   to.
+
+2. Open **OAuth & Permissions** in the sidebar. Under **Redirect URLs**, click
+   **Add New Redirect URL**, enter:
+
+   ```
+   https://insertyourdomainhere.com/auth/slack/callback
+   ```
+
+   then **Add**, then **Save URLs**.
+
+   This has to match what the server builds from `PUBLIC_ORIGIN` exactly, character
+   for character — Slack compares the two and refuses the sign-in if they differ by
+   so much as a trailing slash. It must be https: Slack will not redirect to a plain
+   http address, which is also why there is no way to complete a real sign-in
+   against `localhost` (see DEVELOPMENT.md for how development works instead).
+
+3. Still on that page, scroll to **Scopes**. Under **User Token Scopes** — not Bot
+   Token Scopes — add exactly these three:
+
+   ```
+   openid    profile    email
+   ```
+
+   These are the Sign in with Slack scopes, and Slack does not allow them to be
+   combined with any others in the same app. If you find yourself adding a fourth,
+   something has gone wrong.
+
+4. Scroll back to the top and click **Install to Workspace**, then **Allow**. If
+   your workspace requires approval, this is where it will say so.
+
+5. Open **Basic Information → App Credentials** and copy the **Client ID** and the
+   **Client Secret** (click *Show* first). These are `SLACK_CLIENT_ID` and
+   `SLACK_CLIENT_SECRET`.
+
+6. Find your workspace's id. Open Slack in a browser and read it out of the address:
+
+   ```
+   https://app.slack.com/client/T01ABCDEFGH/C02...
+                                ^^^^^^^^^^^ SLACK_TEAM_ID
+   ```
+
+   It always begins with `T`.
 
 ### 2. Configure and start
 
@@ -176,6 +218,37 @@ something reaches the backend cross-origin. It now also builds the address Slack
 returns players to, and decides whether the session cookie is marked `Secure` --
 which is why it is taken from configuration rather than from the request headers,
 where a client could set it.
+
+## When sign-in does not work
+
+The failure is almost always one of four things, and each looks different:
+
+**`bad_redirect_uri` from Slack, before you ever reach the game.** The Redirect URL
+on the Slack app and the one the server builds from `PUBLIC_ORIGIN` do not match.
+Compare them character for character — a trailing slash on `PUBLIC_ORIGIN`, or
+`www.` on one and not the other, is enough. Check what the server is actually
+sending:
+
+```bash
+curl -sD- -o /dev/null https://insertyourdomainhere.com/auth/slack/login | grep -i location
+```
+
+The `redirect_uri` in that URL is what Slack will compare against.
+
+**Back at the game with `?auth_error=wrong_workspace`.** The account is real but
+belongs to a different workspace than `SLACK_TEAM_ID`. The backend logs a warning
+naming the team it saw, which is the quickest way to spot a mistyped id.
+
+**Back with `?auth_error=expired`.** The sign-in took more than ten minutes, or it
+started in one browser and finished in another. Just try again.
+
+**The page says the server is not set up for Slack sign-in.** `SLACK_CLIENT_ID`,
+`SLACK_CLIENT_SECRET` or `SLACK_TEAM_ID` is missing. The backend refuses to start
+in that state, so check `docker compose -f docker-compose.prod.yml logs backend`:
+it names the specific variable.
+
+Anything else shows as `?auth_error=slack`, and the backend log carries the reason
+Slack gave.
 
 ## Signing in
 
