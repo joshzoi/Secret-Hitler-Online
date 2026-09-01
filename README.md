@@ -9,7 +9,7 @@ In the game, players are divided into Liberals, Fascists, and one secret Hitler.
 Can you find and stop the Secret Hitler?
 
 ### How to Play: 
-First, create a new lobby. Use the lobby's code or the provided link to invite your friends. You can play with up to 10 players at once!
+Sign in with Slack, then create a lobby or join one from the list of open games. Your name and picture come from your Slack profile, so everyone can tell who is who between rounds. You can play with five to ten players; there are no bots, so a game waits until enough people have arrived. Share the lobby's code or link to invite the rest of your workspace.
 
 There are instructions on how to play the game provided on the website, and plenty of helpful tips are provided for first-time players. The game takes care of rules for you, making it easy to pick up and play. 
 
