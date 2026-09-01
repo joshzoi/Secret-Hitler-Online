@@ -46,6 +46,18 @@ test("asks a signed-out visitor to sign in with Slack", async () => {
   expect(screen.queryByRole("button", { name: "JOIN" })).toBeNull();
 });
 
+test("offers a way to sign in to Slack first, in a new tab", async () => {
+  signedOut();
+  render(<App />);
+
+  const link = await screen.findByRole("link", { name: /Sign in to Slack first/i });
+  expect(link).toHaveAttribute("href", expect.stringContaining("slack.com"));
+  // A new tab, so a player following a game invite does not lose it.
+  expect(link).toHaveAttribute("target", "_blank");
+  // Slack must not be handed a window.opener back into the game.
+  expect(link.getAttribute("rel")).toContain("noopener");
+});
+
 test("shows the signed-in player who they are, and how to play", async () => {
   signedIn();
   await act(async () => {

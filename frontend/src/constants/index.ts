@@ -34,6 +34,11 @@ export const OPEN_LOBBIES = "/open-lobbies";
 export const AUTH_ME = "/auth/me";
 export const AUTH_LOGIN = "/auth/slack/login";
 export const AUTH_LOGOUT = "/auth/logout";
+/* Slack's own sign-in page. Offered as a way out of the slowest version of
+   signing in: somebody already signed in to Slack in this browser only has to
+   confirm, while somebody who is not has to get through Slack's login first.
+   Change the locale here if most players are somewhere else. */
+export const SLACK_SIGNIN_URL = "https://slack.com/intl/en-au/get-started";
 export const WEBSOCKET = "/game";
 export const SERVER_PING = "/ping";
 export const LOBBY_CODE_LENGTH = 4;

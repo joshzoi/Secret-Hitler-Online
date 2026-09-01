@@ -48,3 +48,17 @@
 #signin-invite {
   font-style: italic;
 }
+
+/* Quieter than the Slack button: this is the way round for people who need it,
+   not the way in. */
+#signin-secondary {
+  max-width: 60vmin;
+  margin: 4px auto 0;
+  font-family: var(--textFont);
+  font-size: calc(5px + 1vmin);
+  color: var(--textColorOnDark);
+}
+
+#signin-secondary a {
+  color: var(--textColorHighlight);
+}

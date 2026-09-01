@@ -1,7 +1,7 @@
 import React from "react";
 import "./SignInPage.css";
 import { slackMark } from "../assets";
-import { AUTH_LOGIN, SERVER_ADDRESS_HTTP } from "../constants";
+import { AUTH_LOGIN, SERVER_ADDRESS_HTTP, SLACK_SIGNIN_URL } from "../constants";
 import LoginPageContent from "../LoginPageContent";
 
 type SignInPageProps = {
@@ -44,6 +44,23 @@ export default function SignInPage(props: SignInPageProps) {
             <img className={"slack-signin-mark"} src={slackMark} alt="" />
             Sign in with Slack
           </a>
+        )}
+
+        {!props.unreachable && (
+          /* Signing in is one tap for somebody already signed in to Slack in
+             this browser, and a whole login for somebody who is not. Opens in a
+             new tab so a half-finished game invite is not thrown away. */
+          <p id={"signin-secondary"}>
+            Not signed in to Slack in this browser?{" "}
+            <a
+              href={SLACK_SIGNIN_URL}
+              target={"_blank"}
+              rel={"noopener noreferrer"}
+            >
+              Sign in to Slack first
+            </a>
+            , then come back here.
+          </p>
         )}
       </div>
       <LoginPageContent />
