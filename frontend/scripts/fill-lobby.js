@@ -179,7 +179,8 @@ function decideAction(state, me) {
       return target ? { command: "register-special-election", target } : null;
     }
     case "POST_LEGISLATIVE":
-      return isPresident ? { command: "end-term" } : null;
+      // The server ends the term itself; there is nothing to send.
+      return null;
     default:
       // Setup, and the four victory states: nothing left to do.
       return null;

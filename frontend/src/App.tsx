@@ -1936,9 +1936,9 @@ class App extends Component<{}, AppState> {
             default:
           }
 
-          this.queueStatusMessage(
-            "Waiting for the president to end their term."
-          );
+          // No status message: the server ends the term as soon as it has sent
+          // this state out, so anything set here would sit on the status bar
+          // asking the table to wait for something that already happened.
           break;
 
         case STATE_LIBERAL_VICTORY_EXECUTION:
@@ -2335,20 +2335,6 @@ class App extends Component<{}, AppState> {
               <Deck cardCount={this.state.drawDeckSize} deckType={"DRAW"} />
 
               <div style={{ margin: "auto auto" }}>
-                <button
-                  disabled={
-                    this.state.gameState[PARAM_STATE] !==
-                      STATE_POST_LEGISLATIVE ||
-                    this.state.name !== this.state.gameState[PARAM_PRESIDENT]
-                  }
-                  onClick={() => {
-                    this.sendWSCommand({ command: WSCommandType.END_TERM });
-                  }}
-                >
-                  {" "}
-                  END TERM
-                </button>
-
                 <PlayerPolicyStatus
                   numFascistPolicies={this.state.fascistPolicies}
                   numLiberalPolicies={this.state.liberalPolicies}

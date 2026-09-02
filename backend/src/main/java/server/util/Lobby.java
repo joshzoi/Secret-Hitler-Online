@@ -1,5 +1,6 @@
 package server.util;
 
+import game.GameState;
 import game.SecretHitlerGame;
 import io.javalin.websocket.WsContext;
 import org.eclipse.jetty.websocket.api.StatusCode;
@@ -542,6 +543,27 @@ public class Lobby implements Serializable {
         if (game != null && game.hasGameFinished()) {
             game = null;
         }
+    }
+
+    /**
+     * Ends a presidential term that has nothing left in it.
+     *
+     * @effects if the game is sitting in {@code POST_LEGISLATIVE} -- the
+     *          president has enacted their policy and used any power that came
+     *          with it -- ends their term and tells everyone. Does nothing
+     *          otherwise, so this is safe to call after any command.
+     *          <p>
+     *          Call this only once the state that is being left has already been
+     *          sent out: {@code POST_LEGISLATIVE} is what tells a client to show
+     *          the enacted policy and the result of any presidential power, and
+     *          those messages name the president who is leaving.
+     */
+    synchronized public void endFinishedTerm() {
+        if (!isInGame() || game.getState() != GameState.POST_LEGISLATIVE) {
+            return;
+        }
+        game.endPresidentialTerm();
+        updateAllUsers();
     }
 
     /**

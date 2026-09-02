@@ -799,8 +799,11 @@ public class SecretHitlerServer {
                         break;
 
                     case COMMAND_END_TERM:
-                        verifyIsPresident(name, lobby);
-                        lobby.game().endPresidentialTerm();
+                        // The server ends a finished term by itself, so there is
+                        // nothing to do here. The command is still accepted so
+                        // that a client running an older copy of the page -- the
+                        // app installs a service worker -- is not dropped from
+                        // its game for asking.
                         break;
 
                     case COMMAND_LEAVE_LOBBY:
@@ -848,6 +851,12 @@ public class SecretHitlerServer {
             if (updateUsers) {
                 lobby.updateAllUsers();
             }
+            // Every state that ends a term is reached by a command, so this is the
+            // point where one can be finished. Checked after every command, not
+            // just the ones that can finish a term: a term left hanging by an
+            // error would otherwise stay hanging, and this way the next packet
+            // from anyone -- a ping will do -- moves the game on.
+            lobby.endFinishedTerm();
         }
         hasLobbyChanged = true;
     }

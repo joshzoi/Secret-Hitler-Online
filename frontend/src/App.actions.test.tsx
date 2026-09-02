@@ -277,6 +277,27 @@ test("a player with nothing to do is not prompted", async () => {
 });
 
 /**
+ * By POST_LEGISLATIVE the president has enacted their policy and used any power
+ * that came with it, so the server ends their term itself. There is nothing for
+ * them to press, and nobody should be told to wait on them.
+ */
+test("a president whose term is over is not asked to end it", async () => {
+  const ws = await joinLobby();
+  ws.deliver(
+    gameStatePacket({
+      state: LobbyState.POST_LEGISLATIVE,
+      lastState: LobbyState.LEGISLATIVE_CHANCELLOR,
+      president: ME,
+    })
+  );
+  runAnimations();
+
+  expect(screen.queryByRole("button", { name: /END TERM/ })).toBeNull();
+  expect(screen.queryByText(/end their term/)).toBeNull();
+  expect(ws.sent.some((message) => message.includes("end-term"))).toBe(false);
+});
+
+/**
  * Delivers a lobby packet listing the given players, with ME first so that this
  * client is the host and sees the start button at all.
  */

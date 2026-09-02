@@ -122,7 +122,6 @@ export const COMMAND_REGISTER_EXECUTION = "register-execution";
 export const COMMAND_REGISTER_SPECIAL_ELECTION = "register-special-election";
 export const COMMAND_GET_INVESTIGATION = "get-investigation";
 export const COMMAND_REGISTER_PEEK = "register-peek";
-export const COMMAND_END_TERM = "end-term";
 export const COMMAND_LEAVE_LOBBY = "leave-lobby";
 
 //</editor-fold>
@@ -137,7 +136,7 @@ export const STATE_PP_PEEK = "PRESIDENTIAL_POWER_PEEK"; // President may peek at
 export const STATE_PP_INVESTIGATE = "PRESIDENTIAL_POWER_INVESTIGATE"; // President can investigate a party membership
 export const STATE_PP_EXECUTION = "PRESIDENTIAL_POWER_EXECUTION"; // President may choose a player to execute
 export const STATE_PP_ELECTION = "PRESIDENTIAL_POWER_ELECTION"; // President chooses the next president, seat continues as normal after.
-export const STATE_POST_LEGISLATIVE = "POST_LEGISLATIVE"; // Waiting for the President to end their turn.
+export const STATE_POST_LEGISLATIVE = "POST_LEGISLATIVE"; // The President's actions are done; the term ends once this has been sent out.
 export const STATE_LIBERAL_VICTORY_POLICY = "LIBERAL_VICTORY_POLICY"; // Liberal Party won through enacting Liberal policies.
 export const STATE_LIBERAL_VICTORY_EXECUTION = "LIBERAL_VICTORY_EXECUTION"; // Liberal Party won through executing Hitler.
 export const STATE_FASCIST_VICTORY_POLICY = "FASCIST_VICTORY_POLICY"; // Fascist Party won through enacting Fascist policies.
