@@ -267,8 +267,6 @@ type AppState = {
   /* Whether the player has chosen to conceal role information on this device,
      so a neighbour glancing at their screen cannot see their team. Persisted. */
   hideRole: boolean;
-  /* True while a concealed role badge is held down to peek at it. Transient. */
-  peekingRole: boolean;
   /* True while the connection to the server is down and being retried, so the
      player can see that the game is stalled rather than that nobody is moving. */
   connectionLost: boolean;
@@ -306,7 +304,6 @@ const defaultAppState: AppState = {
   statusBarText: "---",
   allAnimationsFinished: true,
   hideRole: false,
-  peekingRole: false,
   connectionLost: false,
   showSlowSignIn: false,
 };
@@ -390,7 +387,6 @@ class App extends Component<{}, AppState> {
     this.clearAnimationQueue = this.clearAnimationQueue.bind(this);
     this.queueAlert = this.queueAlert.bind(this);
     this.onClickToggleHideRole = this.onClickToggleHideRole.bind(this);
-    this.setPeekingRole = this.setPeekingRole.bind(this);
     this.reconcileActionPrompt = this.reconcileActionPrompt.bind(this);
     this.handleSessionExpired = this.handleSessionExpired.bind(this);
     this.onClickSignOut = this.onClickSignOut.bind(this);
@@ -1322,22 +1318,12 @@ class App extends Component<{}, AppState> {
    */
   onClickToggleHideRole() {
     const hideRole = !this.state.hideRole;
-    this.setState({ hideRole, peekingRole: false });
+    this.setState({ hideRole });
     Cookies.set(COOKIE_HIDE_ROLE, String(hideRole), {
       expires: 7,
       sameSite: "lax",
     });
   }
-
-  /**
-   * Called while a concealed role badge is held down, to reveal it for as long
-   * as the press lasts.
-   */
-  setPeekingRole(peekingRole: boolean) {
-    this.setState({ peekingRole });
-  }
-
-
 
   /**
    * Determines whether the 'Start Game' button in the lobby should be enabled.
@@ -2306,7 +2292,7 @@ class App extends Component<{}, AppState> {
           <div id={"hide-role-container"}>
             <p id={"hide-role-text"}>
               {this.state.hideRole
-                ? "Roles hidden. Hold a ? to peek."
+                ? "Roles hidden on this device."
                 : "Playing in the same room?"}
             </p>
             <button
@@ -2408,12 +2394,7 @@ class App extends Component<{}, AppState> {
         page_render = this.renderLoginPage();
     }
     return (
-      <RoleVisibilityContext.Provider
-        value={{
-          masked: this.state.hideRole && !this.state.peekingRole,
-          setPeeking: this.setPeekingRole,
-        }}
-      >
+      <RoleVisibilityContext.Provider value={{ masked: this.state.hideRole }}>
         <HelmetMetaData />
         {this.state.connectionLost && (
           <div id="connection-banner">

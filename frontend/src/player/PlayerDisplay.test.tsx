@@ -70,7 +70,7 @@ const renderDisplay = (
   masked: boolean
 ) =>
   render(
-    <RoleVisibilityContext.Provider value={{ masked, setPeeking: () => {} }}>
+    <RoleVisibilityContext.Provider value={{ masked }}>
       <PlayerDisplay gameState={gameState} user={user} />
     </RoleVisibilityContext.Provider>
   );
@@ -96,8 +96,6 @@ describe("Hide Role", () => {
     expect(screen.queryByText("Liberal")).not.toBeInTheDocument();
     // The role must not survive anywhere in the markup a snooper could read.
     expect(container.innerHTML).not.toMatch(/liberal/i);
-    // ...and a placeholder stands in its place.
-    expect(screen.getByText("?")).toBeInTheDocument();
   });
 
   it("hides fascist teammates' roles too, not only the user's own", () => {
@@ -125,7 +123,6 @@ describe("Hide Role", () => {
 
     expect(screen.getByText("Liberal")).toBeInTheDocument();
     expect(screen.getByText("Fascist")).toBeInTheDocument();
-    expect(screen.queryByText("?")).not.toBeInTheDocument();
   });
 
   it("does not invent a role for players it was never told about", () => {
@@ -136,10 +133,10 @@ describe("Hide Role", () => {
     );
     expect(gameState.players["Bob"].id).toBeUndefined();
 
-    renderDisplay(gameState, "Alice", true);
+    const { container } = renderDisplay(gameState, "Alice", false);
 
-    // Alice's own role is concealed behind one placeholder; Bob's unknown role
-    // must render nothing at all rather than a second placeholder.
-    expect(screen.getAllByText("?")).toHaveLength(1);
+    // Alice sees her own role and nothing at all for Bob's unknown one.
+    expect(screen.getByText("Liberal")).toBeInTheDocument();
+    expect(container.innerHTML).not.toMatch(/fascist/i);
   });
 });

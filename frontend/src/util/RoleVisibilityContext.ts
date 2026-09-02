@@ -10,18 +10,15 @@ import React from "react";
  *
  * Passed via context rather than props because alerts are pre-built JSX stored
  * in App's state: their props are snapshotted when the alert is queued, so a
- * prop would go stale as soon as the toggle changed or a peek began. Context
- * updates still reach consumers when a parent bails out of re-rendering an
- * unchanged element, which is exactly the case here.
+ * prop would go stale as soon as the toggle changed. Context updates still
+ * reach consumers when a parent bails out of re-rendering an unchanged
+ * element, which is exactly the case here.
  */
 export type RoleVisibility = {
   /** True when role information should be concealed right now. */
   masked: boolean;
-  /** Called when a concealed badge is pressed and released, to peek at it. */
-  setPeeking: (peeking: boolean) => void;
 };
 
 export const RoleVisibilityContext = React.createContext<RoleVisibility>({
   masked: false,
-  setPeeking: () => {},
 });

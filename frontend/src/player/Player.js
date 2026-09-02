@@ -16,7 +16,6 @@ import IconBusy from "../assets/player-icon-busy.png";
 import YesVote from "../assets/player-icon-ja.png";
 import NoVote from "../assets/player-icon-nein.png";
 import PlayerAvatar from "./PlayerAvatar";
-import {RoleVisibilityContext} from "../util/RoleVisibilityContext";
 
 const LIBERAL = "LIBERAL";
 const FASCIST = "FASCIST";
@@ -26,8 +25,6 @@ const HITLER = "HITLER";
  * A visual representation of a player, including their name and (optionally) their role.
  */
 class Player extends Component {
-
-    static contextType = RoleVisibilityContext;
 
     constructor(props) {
         super(props);
@@ -148,24 +145,7 @@ class Player extends Component {
 
         let identity_components;
         // Conditionally rendered so information is not visible in Inspector view
-        if (!this.props.showRole && this.props.roleHidden) {
-            // The role is known to this client but concealed by the Hide Role
-            // setting. Render a placeholder holding no role information, which
-            // reveals the role for as long as it is held down.
-            const peek = (isPeeking) => this.context.setPeeking(isPeeking);
-            identity_components =
-                <p id="player-identity-hidden"
-                   title={"Hold to reveal role"}
-                   aria-label={"Role hidden. Press and hold to reveal."}
-                   onPointerDown={() => peek(true)}
-                   onPointerUp={() => peek(false)}
-                   onPointerLeave={() => peek(false)}
-                   onPointerCancel={() => peek(false)}
-                   onContextMenu={(e) => e.preventDefault()}
-                >
-                    ?
-                </p>
-        } else if (this.props.showRole) {
+        if (this.props.showRole) {
             identity_components = <>
                     <img id="player-identity-icon"
                          className={this.getClassName()}
@@ -240,7 +220,6 @@ Player.defaultProps = {
     name: "Name Here",
     role: "FASCIST",
     showRole: true,
-    roleHidden: false,
     disabled: false,
     disabledText: "EXECUTED",
     useAsButton: false,
@@ -256,7 +235,6 @@ Player.propTypes = {
     name: PropTypes.string,
     role: PropTypes.string,
     showRole: PropTypes.bool,
-    roleHidden: PropTypes.bool,
     disabled: PropTypes.bool,
     disabledText: PropTypes.string,
     useAsButton: PropTypes.bool,

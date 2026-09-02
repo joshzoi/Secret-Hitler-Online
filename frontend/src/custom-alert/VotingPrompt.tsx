@@ -97,10 +97,9 @@ class VotingPrompt extends Component<VotingPromptProps, VotingPromptState> {
 
   render() {
     let chancellorName = this.props.gameState[PARAM_CHANCELLOR];
-    let wouldShowChancellorRole = this.shouldChancellorRoleBeShown();
     let { masked } = this.context as RoleVisibility;
-    let roleHidden = wouldShowChancellorRole && masked;
-    let shouldShowChancellorRole = wouldShowChancellorRole && !roleHidden;
+    let shouldShowChancellorRole =
+      this.shouldChancellorRoleBeShown() && !masked;
     let chancellorRole =
       this.props.gameState[PARAM_PLAYERS][chancellorName][PLAYER_IDENTITY];
     let presidentName = this.props.gameState[PARAM_PRESIDENT];
@@ -114,7 +113,6 @@ class VotingPrompt extends Component<VotingPromptProps, VotingPromptState> {
                 id={"voting-player"}
                 name={chancellorName}
                 showRole={shouldShowChancellorRole}
-                roleHidden={roleHidden}
                 role={chancellorRole}
                 style={{ marginRight: "10px" }}
                 avatarUrl={this.props.gameState.avatars[chancellorName]}
